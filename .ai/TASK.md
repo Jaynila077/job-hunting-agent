@@ -30,9 +30,12 @@ Produce a clear, agreed product definition of the personal Job Hunting Agent: wh
 - Define the problem and goals: stop manually searching LinkedIn, Google, Indeed, and career pages every day.
 - Define how the agent understands the owner's profile semantically (skills, projects, education, certifications, experience level, target roles, locations, interests).
 - Define what the agent determines for every job: role, company, location, experience required, key skills, whether the owner is a reasonable candidate, matching background, missing requirements, why it is relevant, where to apply.
-- Define prioritization: realistic, high-quality matches over a large list.
+- Define prioritization: realistic, high-quality matches over a large list. Every job gets a 1-10 relevance score; strong matches are never omitted; clearly labeled stretch jobs are allowed.
+- Define rejection feedback: rejecting a job asks for a reason, which feeds preference learning.
+- Define digest sizing: variable, no padding, "nothing today" is acceptable.
 - Define memory: no repeated jobs, and a history of saved / rejected / applied / interviewing jobs.
 - Define the daily digest experience on a web dashboard: ranked new jobs, concise match explanation, direct application link, and actions to save / reject / mark applied / mark interviewing.
+- Define filters: exclude unpaid roles; focus on 0-1 years experience, allow up to 3; remote includes India and worldwide.
 - Define first-version scope vs. the long-term vision (job analysis, resume tailoring, cover letters, application prep, full search tracking).
 - List open questions that must be answered before architecture.
 
@@ -72,7 +75,7 @@ Produce a clear, agreed product definition of the personal Job Hunting Agent: wh
 - [ ] First-version scope and long-term vision are clearly separated.
 - [ ] The advisory-only rule (no auto-apply, no decisions for the owner) is stated as a hard constraint.
 - [ ] The daily digest and dashboard experience, including job statuses, is described.
-- [ ] Open questions are listed and confirmed or resolved by the owner.
+- [x] Open questions are listed and confirmed or resolved by the owner (one deferred: private profile storage).
 - [ ] No technical architecture or implementation details have been introduced.
 
 ---
@@ -108,7 +111,8 @@ Produce a clear, agreed product definition of the personal Job Hunting Agent: wh
 ## Implementation Notes
 
 - Assumed entry-level / fresher profile based on the resume (PG certificate 2026, B.E. 2025, one short internship).
-- Pune assumed as the starting India city; the owner has not yet confirmed cities.
+- Owner confirmed locations: Pune (all areas), Mumbai (all areas), Bangalore, Hyderabad, and remote only.
+- Owner confirmed sources: career pages preferred; LinkedIn important; Naukri and Wellfound used; Indeed not excluded.
 - Resume contact details deliberately left out because the repository is public.
 
 ---
@@ -117,13 +121,9 @@ Produce a clear, agreed product definition of the personal Job Hunting Agent: wh
 
 **Open questions for the owner:**
 
-- Which Indian cities for on-site/hybrid roles?
-- Minimum stipend/salary, and are unpaid internships acceptable?
-- Companies/industries to prioritize or avoid (startups only, service companies, etc.)?
-- How strict should the experience filter be (e.g. show roles asking 0-1 years only, or stretch to 2)?
-- How many jobs per daily digest feels right (e.g. 5-10)?
-- Should "stretch" jobs (partial match) be shown, clearly labeled, or only strong matches?
-- Where should the owner's private profile/resume live, given the repo is public?
+- Where should the owner's private profile/resume live, given the repo is public? (Deferred; decide in the architecture phase.)
+
+**Resolved:** cities, sources, stretch jobs (1-10 score), rejection reasons, variable digest size, no minimum pay but unpaid roles excluded, experience focus 0-1 years (up to 3 allowed), remote = India and worldwide, no company preferences.
 
 ---
 

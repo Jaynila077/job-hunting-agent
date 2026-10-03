@@ -37,7 +37,7 @@ Grow into a personal AI career assistant: job analysis, resume tailoring, cover 
 - **Key projects:** Autonomous Web Intelligence System (multi-agent research with MCP servers and guardrails); Disaster Management Dashboard (full-stack ML, BiLSTM forecasting, ETL, FastAPI).
 - **Certifications:** AZ-900, AWS Certified AI Practitioner, Generative AI (C-DAC ACTS).
 - **Target roles:** AI Engineer, ML Engineer, Data Scientist, Data Engineer, AI/ML internships and apprenticeships, and related entry-level roles.
-- **Target locations:** India on-site/hybrid (cities TBD, Pune assumed as a starting point), India remote, global remote.
+- **Target locations (strict):** Pune (all areas), Mumbai (all areas), Bangalore, Hyderabad, and remote (India-based and global remote). No other cities.
 
 ---
 
@@ -117,6 +117,15 @@ Role title, company, location and work mode, experience requirement, important s
 - **Quality over quantity**: prefer a short list of realistic opportunities to a large list of openings.
 - A job already shown must not be shown again as new. Decision history (saved, rejected, applied, interviewing) is persistent.
 - The daily digest is delivered through a **web dashboard**.
+- **Sources:** company career pages are the preferred and primary source. LinkedIn is important (used regularly); Naukri and Wellfound are also used; Indeed is not excluded. Exact source list and access approach are decided in the architecture phase.
+- **Fit scoring:** every job gets a relevance score from 1 to 10. Strong matches must never be omitted. Some clearly labeled stretch jobs (partial matches) are allowed.
+- **Digest size is not fixed.** It depends on what exists that day (anywhere from ~2 to ~20+ jobs). "Nothing worth showing today" is acceptable; never pad the digest.
+- **Rejection feedback:** when the owner rejects a job, the agent asks for a reason (quick, optional-to-detail) and uses it to learn preferences over time.
+- **Compensation:** no minimum stipend/salary, but **unpaid roles are not acceptable** and must be excluded.
+- **Experience filter:** focus on 0-1 years; roles asking up to 3 years are allowed (lower relevance score as the requirement rises).
+- **Remote** means both India-based remote and worldwide remote.
+- **Company preferences:** none to avoid or prioritize for now.
+- **Private profile storage:** deferred; decide before/during the architecture phase.
 - Initial scope is limited to job discovery and recommendation. Career-assistant features are long-term, not part of the first version.
 - Development follows the `.ai/` workflow: Task → Architecture → Implementation → Verification → Review → Fix → Final Verification. Claude acts as architect and reviewer; another AI agent (currently Gemini) implements.
 
@@ -162,4 +171,4 @@ Role title, company, location and work mode, experience requirement, important s
 
 ### Known Issues
 
-- Preferred cities, minimum stipend/salary, and company/industry preferences are not yet confirmed (see `TASK.md` open questions).
+- Where the owner's private profile/resume lives is undecided (deferred to architecture phase).
