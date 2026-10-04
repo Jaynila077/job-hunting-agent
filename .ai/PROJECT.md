@@ -73,60 +73,64 @@ Role title, company, location and work mode, experience requirement, important s
 
 ## Tech Stack
 
-> Recommended in `ARCHITECTURE.md` (architecture phase). Pending owner confirmation of the open questions listed there.
+> **Keep it simple.** This is a one-person tool. Prefer the standard library and a few well-known packages. A leaner plan (agreed with the owner) replaced the heavier first design.
 
 ### Frontend
 
-Server-rendered dashboard: Jinja2 templates + HTMX (no SPA, no JS build pipeline).
+Streamlit (pure Python dashboard). No HTML/JS build, no separate frontend.
 
 ### Backend
 
-Python 3.11, FastAPI, httpx, Pydantic v2. Fixed pipeline (no agent framework).
+Python 3.11 (Miniconda). Plain modules, no web framework, no agent framework. `httpx` for fetching, `pydantic` to validate LLM JSON output (added when first needed).
 
 ### Database
 
-SQLite (WAL) via SQLAlchemy 2.x + Alembic migrations. Portable to PostgreSQL later.
+SQLite via the standard-library `sqlite3` module (WAL, foreign keys on). Tables created in code; schema version tracked with SQLite's built-in `PRAGMA user_version`. No ORM, no Alembic unless the schema becomes painful.
 
 ### AI / ML
 
-Provider-agnostic LLM wrapper over the OpenAI-compatible API (default Groq; OpenRouter alternative; local Ollama fallback; structured output validated with Pydantic; model names in config). Local small sentence-embedding model + numpy cosine similarity (no vector DB). No LangChain/LangGraph.
+Groq through an OpenAI-compatible client (OpenRouter or local Ollama are config alternatives). **No embeddings and no vector database:** the owner's profile is about one page, so the whole profile (without contact details) goes into the prompt and the LLM does the semantic matching.
 
 ### Infrastructure
 
-Local-first on the owner's Windows machine: Windows Task Scheduler runs `run-daily` (with catch-up); dashboard on `127.0.0.1`. Private data in git-ignored `private/`; secrets in `.env`.
+Local-first on the owner's Windows machine. Windows Task Scheduler runs the daily job. Private data in git-ignored `private/`; secrets in `.env`.
 
 ### Development Tools
 
-pytest, ruff, mypy (or pyright), uv or venv + `pyproject.toml`.
+pytest and ruff, run directly. Config in a single tool-only `pyproject.toml` (no packaging). Dependencies in `requirements.txt`; `environment.yml` creates the conda environment.
 
 ---
 
 ## Architecture
 
-> Full detail in `.ai/ARCHITECTURE.md` (overwritten per task, so the durable summary lives here).
+> Lean design. The earlier heavy system design (FastAPI, Alembic, embeddings, feedback learner, formal evaluation) is **superseded**; it remains in Git history at `1ba3d7d:.ai/ARCHITECTURE.md` only as an idea bank. Do not rebuild it unless the owner asks.
 
 ```text
-Profile (private) ─► Profile Model (structured + embedded evidence, versioned)
-Source Adapters ─► Normalize + Dedupe ─► Hard Filter (rules, reasons recorded)
-   ─► Job Analyzer (LLM, structured) ─► Matcher (evidence retrieval + LLM judge, score 1-10)
-   ─► Digest Builder ─► History Store (SQLite) ─► Dashboard (localhost)
-Dashboard owner actions ─► Decision events ─► Feedback Learner ─► proposals (owner approves)
+Profile (private/) ─┐
+                    ├─► LLM scoring (job text + profile ─► score 1-10, matches, gaps, why)
+Job sources ────────┘            │
+ (paste / career-page feeds)     ▼
+                      SQLite: jobs, scores, decisions
+                                 │
+                                 ▼
+                      Streamlit dashboard (Today / Saved / Applied / Rejected)
 ```
 
 ### Major Components
 
-- **Profile Store & Model:** private resume/preferences to versioned structured profile + evidence snippets.
-- **Source Adapters:** isolated per source; v1 tiers: ATS career-page feeds (company watchlist), public/remote feeds, and Manual add (paste a URL/text, e.g. from LinkedIn). Job-alert email ingestion (LinkedIn/Naukri/Wellfound/Indeed) is deferred to a later version. No scraping of logged-in or ToS-restricted sites.
-- **Normalizer/Deduper & Hard Filter:** same job across sources is one job; exclusions always recorded with a reason.
-- **Analyzer & Matcher:** LLM extraction, then evidence-grounded fit scoring; uncited claims are removed.
-- **Digest Builder:** all strong matches always shown (no cap), stretch jobs capped and labeled, never padded.
-- **History & Memory Store:** jobs, sightings, scores, digests, append-only decision events, run logs.
-- **Feedback Learner:** turns rejection reasons into proposals; only the owner can turn them into hard filters.
-- **Dashboard & CLI/Orchestrator:** Today, Pipeline, Rejected, All jobs, Filtered-out audit, Runs.
+- **Profile:** the owner's resume summary in `private/`, loaded as text for the prompt.
+- **Scorer:** one LLM call per job returns structured JSON: role, company, location, experience, pay, score 1-10, matches, gaps, why relevant. Simple Python checks handle hard rules (location list, unpaid, over 3 years).
+- **Job sources:** Manual add (paste text/URL) first; then public career-page feeds from a company watchlist.
+- **Store:** SQLite holds jobs, scores and the owner's decisions; a simple key (company + title + location, plus URL) prevents showing the same job twice.
+- **Dashboard:** Streamlit page with Save / Reject (+ reason) / Applied / Interviewing buttons.
 
-### Build plan (vertical slices, each one TASK.md)
+### Build plan (5 small milestones)
 
-M0 skeleton + private-data foundation, M1 profile model, M2 analyze/score one job + evaluation set, M3 memory + dashboard (manual input), M4 discovery + daily run, M5 digest polish + feedback proposals, M6 hardening.
+- **M0 Setup:** environment, `.gitignore`, `.env`, config, SQLite helper, README, a few tests.
+- **M1 Profile + score one job:** paste a job, get the score card. The core value.
+- **M2 Save and track:** store jobs and decisions; Streamlit dashboard.
+- **M3 Auto-fetch + daily run:** career-page feeds, Windows Task Scheduler, digest.
+- **M4 Polish:** stretch-job rules, reject reasons, cleanup.
 
 ---
 
@@ -143,21 +147,22 @@ M0 skeleton + private-data foundation, M1 profile model, M2 analyze/score one jo
 - **Sources:** company career pages are the preferred and primary source. LinkedIn is important (used regularly); Naukri and Wellfound are also used; Indeed is not excluded. Exact source list and access approach are decided in the architecture phase.
 - **Fit scoring:** every job gets a relevance score from 1 to 10. Strong matches must never be omitted. Some clearly labeled stretch jobs (partial matches) are allowed.
 - **Digest size is not fixed.** It depends on what exists that day (anywhere from ~2 to ~20+ jobs). "Nothing worth showing today" is acceptable; never pad the digest.
-- **Rejection feedback:** when the owner rejects a job, the agent asks for a reason (quick, optional-to-detail) and uses it to learn preferences over time.
+- **Rejection feedback:** when the owner rejects a job, the agent asks for a quick reason and stores it.
 - **Compensation:** no minimum stipend/salary, but **unpaid roles are not acceptable** and must be excluded.
 - **Experience filter:** focus on 0-1 years; roles asking up to 3 years are allowed (lower relevance score as the requirement rises).
 - **Remote** means both India-based remote and worldwide remote.
 - **Company preferences:** none to avoid or prioritize for now.
 - **Private profile storage:** resolved by the local-first design (git-ignored `private/`).
-- **Stack (recommended; owner has not objected):** Python + FastAPI + Jinja2/HTMX + SQLite/SQLAlchemy/Alembic + local embeddings + provider-agnostic LLM wrapper. Fixed pipeline, no agent framework, no vector DB.
+- **Simplicity is a requirement.** The owner does not want a complex project. Prefer the standard library, few dependencies, few files, plain functions. No frameworks or abstraction layers "for later".
+- **Stack (agreed):** Python 3.11 + Streamlit + stdlib `sqlite3` + Groq (OpenAI-compatible client). No FastAPI, Alembic, ORM, embeddings, vector DB or agent framework.
 - **Local-first:** app, database and profile run on the owner's machine; all private data lives in git-ignored `private/`; secrets in `.env`. Nothing private is ever stored in a Git-tracked path.
 - **Advisory-only is structural:** LLM steps have no tools; only dashboard actions can write owner decisions; no code path applies or sends anything.
-- **Strong matches are never silently lost:** every exclusion/failure is recorded and browsable; strong-match recall is the primary evaluation metric.
+- **Strong matches are never silently lost:** excluded or failed jobs are kept and viewable with the reason. Quality is checked by eye on 10-15 real jobs (no formal labeled set required).
 - **Unknown pay** is shown with a "pay not stated" flag; only explicit unpaid is excluded (owner confirmed).
-- **Thresholds (confirmed starting values):** strong ≥ 7 (always all shown), stretch 5-6 (max 5 shown), calibrated later on the owner's labeled set (50-60 listings, created when needed).
-- **LLM:** hosted provider accepted (Groq default, OpenRouter possible); send minimal profile excerpts, never contact details.
-- **Email-alert ingestion is deferred** to a later version; v1 relies on career-page feeds, remote feeds and Manual add.
-- **Learning from rejections is proposal-based:** hard filters change only with owner approval.
+- **Thresholds (confirmed starting values):** strong ≥ 7 (always all shown), stretch 5-6 (max 5 shown), adjusted by the owner after trying real jobs.
+- **LLM:** hosted provider accepted (Groq default, OpenRouter possible). The profile sent to the LLM never includes contact details.
+- **Email-alert ingestion is deferred** to a later version; v1 relies on Manual add and career-page feeds.
+- **Rejection reasons are stored** with the decision; nothing is learned or changed automatically. Any rule change is made by the owner.
 - Initial scope is limited to job discovery and recommendation. Career-assistant features are long-term, not part of the first version.
 - Development follows the `.ai/` workflow: Task → Architecture → Implementation → Verification → Review → Fix → Final Verification. Claude acts as architect and reviewer; another AI agent (currently Gemini) implements.
 
@@ -185,6 +190,7 @@ M0 skeleton + private-data foundation, M1 profile model, M2 analyze/score one jo
 - Do NOT make decisions for the owner (e.g. auto-rejecting or auto-saving jobs without the owner's action).
 - Do NOT commit personal data (phone, email, full resume, credentials, API keys) to this public repository.
 - Do NOT implement a milestone before its `TASK.md` and `ARCHITECTURE.md` exist and the previous milestone passed review.
+- Do NOT add dependencies, layers or features beyond the current task "for later".
 - Do NOT scrape sites whose terms prohibit it, or log in to third-party sites as the owner.
 - Do NOT add resume tailoring, cover letters, or application preparation to the first version.
 
@@ -197,14 +203,14 @@ M0 skeleton + private-data foundation, M1 profile model, M2 analyze/score one jo
 ### Completed
 
 - Repository and `.ai/` workflow set up.
-- Product concept, goals, user experience and core functionality defined.
-- First-version architecture and stack drafted in `ARCHITECTURE.md` (awaiting owner review).
+- Product concept, goals and user experience defined.
+- Architecture simplified to the lean plan above (owner-approved).
 
 ### In Progress
 
-- Owner review of the architecture; next step is the owner's `TASK.md` for M0 (project skeleton).
+- M0 Setup: `ARCHITECTURE.md` written; owner to update `TASK.md` to the lean M0, then Gemini implements.
 
 ### Known Issues
 
-- Still open (see `ARCHITECTURE.md` Open Questions): hosting model (local-first assumed), company watchlist (needed before M4), evaluation labels (needed before M2 is accepted), Python/Gemini environment check, Groq limits/terms to verify.
-- `TASK.md` Constraints still contains a stale "technology-agnostic" line (owner to remove).
+- `TASK.md` still describes the old heavy M0 (Alembic, pydantic-settings, CLI test commands, mypy, packaging) until the owner rewrites it.
+- Company watchlist needed before M3 (owner to research).
