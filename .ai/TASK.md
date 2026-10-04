@@ -11,51 +11,46 @@
 
 **Title:**
 
-Define the Job Hunting Agent concept, goals, user experience, and core functionality
+Analyze the project and design the architecture for the first version of the Job Hunting Agent
 
 **Type:**
-
-Documentation (concept definition). No implementation and no technical architecture.
+Architecture design (conceptual design of the first version). No implementation or code.
 
 ---
 
 ## Objective
 
-Produce a clear, agreed product definition of the personal Job Hunting Agent: what it is for, what the owner experiences day to day, and what it must do in its first version, so the next phase (architecture) can start from a stable product spec.
+Produce a clear, agreed architectural specification for the first version of the personal Job Hunting Agent: how the system will be structured, what components are needed, how data flows, and what interfaces exist, so the next phase (implementation) can start from a stable design.
 
 ---
 
 ## Requirements
 
-- Define the problem and goals: stop manually searching LinkedIn, Google, Indeed, and career pages every day.
-- Define how the agent understands the owner's profile semantically (skills, projects, education, certifications, experience level, target roles, locations, interests).
-- Define what the agent determines for every job: role, company, location, experience required, key skills, whether the owner is a reasonable candidate, matching background, missing requirements, why it is relevant, where to apply.
-- Define prioritization: realistic, high-quality matches over a large list. Every job gets a 1-10 relevance score; strong matches are never omitted; clearly labeled stretch jobs are allowed.
-- Define rejection feedback: rejecting a job asks for a reason, which feeds preference learning.
-- Define digest sizing: variable, no padding, "nothing today" is acceptable.
-- Define memory: no repeated jobs, and a history of saved / rejected / applied / interviewing jobs.
-- Define the daily digest experience on a web dashboard: ranked new jobs, concise match explanation, direct application link, and actions to save / reject / mark applied / mark interviewing.
-- Define filters: exclude unpaid roles; focus on 0-1 years experience, allow up to 3; remote includes India and worldwide.
-- Define first-version scope vs. the long-term vision (job analysis, resume tailoring, cover letters, application prep, full search tracking).
-- List open questions that must be answered before architecture.
+- Analyze the product definition, decisions, and constraints from `PROJECT.md` and the completed concept definition.
+- Identify the core components needed for the first version: profile understanding, job discovery, job analysis and matching, memory/history, daily digest and dashboard.
+- Define the high‑level architecture: component responsibilities, data flow, interaction patterns, and key interfaces.
+- Specify any non‑functional requirements that influence architecture: privacy of private profile data, no auto‑apply, advisory‑only rule, variable digest size, relevance scoring, rejection feedback, memory of job history, and exclusion of unpaid roles.
+- Identify open questions that must be answered before implementation (e.g., private profile storage, source access methods, database schema, AI model selection, infrastructure).
+- Preserve all existing product decisions and requirements that remain relevant to the architecture.
 
 ---
 
 ## Constraints
 
-- The agent only discovers and recommends. It must never apply to jobs or decide for the owner.
-- Concept phase only: no tech stack choices, no architecture, no code.
-- Keep personal contact details out of the public repository.
-- Do not change the `.ai/` workflow itself.
+- The architecture must respect the advisory‑only rule: the agent must never apply to jobs or make decisions for the owner.
+- No technical stack choices or implementation details are to be made; the design should be technology‑agnostic.
+- Personal contact details must remain excluded from the public repository.
+- The `.ai/` workflow itself must not be altered.
 
 ---
 
 ## Out of Scope
 
-- Technical architecture, tech stack selection, data models, APIs.
-- Any implementation or code.
-- Auto-apply, resume tailoring, cover letters, application preparation (long-term only).
-- Choosing job sources or scraping approaches (architecture phase).
+
+- Actual implementation or code.
+- Detailed data models, APIs, or database schemas.
+- Selection of specific technologies or frameworks.
+- Any changes to the `.ai/` workflow.
 
 ---
 
@@ -63,20 +58,18 @@ Produce a clear, agreed product definition of the personal Job Hunting Agent: wh
 
 - `.ai/PROJECT.md` (concept, profile summary, decisions, constraints)
 - `.ai/TASK.md` (this file)
-- `docs/CONCEPT.md` (readable concept summary)
 
 ---
 
 ## Acceptance Criteria
 
-> The implementation is complete only when all applicable criteria are satisfied.
+> The architecture design is complete only when all applicable criteria are satisfied.
 
-- [ ] Goals, user experience, and core functionality are written down clearly and agree with the owner's original brief.
-- [ ] First-version scope and long-term vision are clearly separated.
-- [ ] The advisory-only rule (no auto-apply, no decisions for the owner) is stated as a hard constraint.
-- [ ] The daily digest and dashboard experience, including job statuses, is described.
-- [x] Open questions are listed and confirmed or resolved by the owner (one deferred: private profile storage).
-- [ ] No technical architecture or implementation details have been introduced.
+- [ ] The architecture diagram or description clearly shows component responsibilities and data flow.
+- [ ] All product decisions and constraints from `PROJECT.md` that affect architecture are preserved.
+- [ ] Open questions are listed and marked for resolution in the next phase.
+- [ ] No implementation or code has been introduced.
+- [ ] The advisory‑only rule and privacy constraints are explicitly reflected in the design.
 
 ---
 
@@ -85,35 +78,29 @@ Produce a clear, agreed product definition of the personal Job Hunting Agent: wh
 ### Planning
 
 - [x] Requirements understood
-- [ ] Relevant code inspected (N/A: no code yet)
-- [ ] Architecture designed (not part of this task)
+- [ ] Architecture designed (pending)
 
 ### Implementation
 
-- [x] Implementation started
-- [ ] Implementation complete (pending owner review)
+- [ ] Implementation started (not applicable)
 
 ### Verification
 
 - [ ] Tests pass (N/A)
 - [ ] Lint / type checks pass (N/A)
 - [ ] Build passes (N/A)
-- [ ] Acceptance criteria verified
 
 ### Review
 
-- [ ] Code reviewed
-- [ ] Review issues fixed
-- [ ] Final verification complete
+- [ ] Code reviewed (not applicable)
 
 ---
 
 ## Implementation Notes
 
-- Assumed entry-level / fresher profile based on the resume (PG certificate 2026, B.E. 2025, one short internship).
-- Owner confirmed locations: Pune (all areas), Mumbai (all areas), Bangalore, Hyderabad, and remote only.
-- Owner confirmed sources: career pages preferred; LinkedIn important; Naukri and Wellfound used; Indeed not excluded.
-- Resume contact details deliberately left out because the repository is public.
+
+- The architecture will be documented in `ARCHITECTURE.md` once completed.
+- Claude will be responsible for the design; no other agent will define the architecture.
 
 ---
 
