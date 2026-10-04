@@ -11,46 +11,46 @@
 
 **Title:**
 
-M0 – Skeleton and Private‑Data Foundation
+M1 – Profile Model
 
 **Type:**
-Implementation (project skeleton, environment, configuration, and basic infrastructure)
+Implementation (profile extraction, structuring, embedding, versioning, and inspection command)
 
 ---
 
 ## Objective
 
-Set up the foundational project structure and tooling required for all subsequent milestones (M1–M7). This includes creating the Miniconda environment file, `pyproject.toml`, configuration loading, command‑line entry point, logging, SQLite with migrations, test and lint tooling, `.gitignore` for `private/`, and a README with setup steps.
+Read the owner’s resume from the `private/` directory, build a structured profile that includes evidence snippets and embeddings, version the profile, and provide a command that displays what the agent understands about the owner. The profile must be validated against the resume file and the output verified.
 
 ---
 
 ## Requirements
 
-- Create a `conda.yml` (or `environment.yml`) that defines the base Python 3.11 environment and any required packages for the skeleton.
-- Add a `pyproject.toml` with project metadata, dependencies, and build configuration.
-- Implement a lightweight configuration loader that reads from `.env` and supports overrides.
-- Provide a command‑line entry point (`cli.py` or similar) that can be invoked to run the application or run tests.
-- Set up structured logging (e.g., using the `logging` module) with a default configuration.
-- Initialize a SQLite database with Alembic migrations (empty schema for now) and a simple data‑access layer.
-- Add test and lint tooling (`pytest`, `ruff`, `mypy`) and ensure they can be run via the CLI.
-- Create a `.gitignore` that excludes the `private/` directory and any other sensitive files.
-- Draft a README that explains how to set up the environment, run the application, and run tests.
+- Read the resume file located in `private/` (exact filename to be defined by the owner).
+- Parse the resume into a structured profile model (e.g., using Pydantic or dataclasses) that captures education, experience, skills, projects, certifications, target roles, and target locations.
+- Extract evidence snippets from the resume that support each profile field.
+- Generate embeddings for relevant profile sections (using the same LLM provider as the rest of the system).
+- Store the profile in a versioned format (e.g., JSON with a version number and timestamp).
+- Provide a CLI command (e.g., `profile inspect`) that prints the structured profile and a summary of what the agent has understood.
+- Validate that the profile output matches the resume content (basic checks such as presence of required fields, non-empty lists, etc.).
+- Ensure no private data (contact details, full resume text) is committed to the repository; the profile data is stored only in the local environment or a git‑ignored location.
 
 ---
 
 ## Constraints
 
-- The skeleton must not include any business logic beyond the infrastructure described above.
-- No private data (resume, credentials) should be committed to the repository.
-- The `.ai/` workflow must remain unchanged.
+- The profile extraction must not alter the existing `.ai/` workflow or other tasks.
+- No business logic beyond profile parsing, embedding, and inspection is required.
+- The implementation must use the existing environment and tooling set up in M0 (Miniconda, `pyproject.toml`, logging, SQLite, etc.).
+- The profile must be stored in a location that is not tracked by Git (e.g., `private/profile.json` or a SQLite table).
 
 ---
 
 ## Out of Scope
 
-- Implementation of any core application components (profile understanding, job discovery, etc.).
-- Detailed data models or business logic.
-- Any changes to the `.ai/` workflow.
+- Full job matching or recommendation logic.
+- Any changes to the overall architecture beyond the profile component.
+- Embedding storage beyond the profile itself.
 
 ---
 
@@ -63,17 +63,15 @@ Set up the foundational project structure and tooling required for all subsequen
 
 ## Acceptance Criteria
 
-> The skeleton implementation is complete only when all applicable criteria are satisfied.
+> The profile model implementation is complete only when all applicable criteria are satisfied.
 
-- [ ] A working Miniconda environment file is present and can be created.
-- [ ] `pyproject.toml` is configured with project metadata and dependencies.
-- [ ] Configuration loader reads from `.env` and supports overrides.
-- [ ] A command‑line entry point is available and can run the application or tests.
-- [ ] Structured logging is configured and usable.
-- [ ] SQLite database is initialized with Alembic migrations (empty schema).
-- [ ] Test and lint tooling are set up and runnable via the CLI.
-- [ ] `.gitignore` excludes `private/` and other sensitive files.
-- [ ] README contains clear setup, run, and test instructions.
+- [ ] The resume file is read from `private/` without committing it to Git.
+- [ ] A structured profile model is created with all required fields.
+- [ ] Evidence snippets are extracted and associated with the corresponding profile fields.
+- [ ] Embeddings are generated for relevant sections.
+- [ ] The profile is stored in a versioned format (JSON or SQLite) with a version number and timestamp.
+- [ ] The CLI command `profile inspect` displays the structured profile and a concise summary.
+- [ ] Basic validation confirms that the profile matches the resume content.
 - [ ] No private data is committed to the repository.
 - [ ] The `.ai/` workflow remains unchanged.
 
@@ -84,7 +82,7 @@ Set up the foundational project structure and tooling required for all subsequen
 ### Planning
 
 - [x] Requirements understood
-- [ ] Skeleton designed (pending)
+- [ ] Design finalized (pending)
 
 ### Implementation
 
@@ -104,8 +102,8 @@ Set up the foundational project structure and tooling required for all subsequen
 
 ## Implementation Notes
 
-- The skeleton will be the foundation for all subsequent milestones (M1–M7).
-- No other agent will define the skeleton; this task is handled by the current implementation agent.
+- The profile model will be the foundation for subsequent milestones (M2–M7).
+- No other agent will define the profile extraction; this task is handled by the current implementation agent.
 
 ---
 
@@ -115,7 +113,7 @@ Set up the foundational project structure and tooling required for all subsequen
 
 - None at this stage.
 
-**Resolved:** All product decisions and constraints that affect the skeleton have been preserved.
+**Resolved:** All product decisions and constraints that affect the profile model have been preserved.
 
 ---
 
