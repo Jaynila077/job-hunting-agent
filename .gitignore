@@ -220,3 +220,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project private data
+private/
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env.*
+!.env.example
