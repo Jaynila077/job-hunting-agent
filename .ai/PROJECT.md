@@ -81,7 +81,7 @@ Server-rendered dashboard: Jinja2 templates + HTMX (no SPA, no JS build pipeline
 
 ### Backend
 
-Python 3.12+, FastAPI, httpx, Pydantic v2. Fixed pipeline (no agent framework).
+Python 3.11, FastAPI, httpx, Pydantic v2. Fixed pipeline (no agent framework).
 
 ### Database
 
