@@ -49,7 +49,6 @@ Produce a clear, agreed architectural specification for the first version of the
 
 - Actual implementation or code.
 - Detailed data models, APIs, or database schemas.
-- Selection of specific technologies or frameworks.
 - Any changes to the `.ai/` workflow.
 
 ---
