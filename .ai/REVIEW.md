@@ -305,7 +305,7 @@ Checked against the acceptance criteria in `ARCHITECTURE.md`.
 
 **Status:**
 
-CHANGES REQUIRED
+CHANGES DONE
 
 **Summary:**
 

@@ -81,7 +81,7 @@ Streamlit (pure Python dashboard). No HTML/JS build, no separate frontend.
 
 ### Backend
 
-Python 3.11 (Miniconda). Plain modules, no web framework, no agent framework. `httpx` for fetching, `pydantic` to validate LLM JSON output (added when first needed).
+Python 3.11 (Miniconda). Plain modules, no web framework, no agent framework. `httpx` for fetching and LLM calls, `pydantic` to validate LLM JSON output, `pypdf` to read the PDF resume (all added at M1).
 
 ### Database
 
@@ -89,7 +89,7 @@ SQLite via the standard-library `sqlite3` module (WAL, foreign keys on). Tables 
 
 ### AI / ML
 
-Groq through an OpenAI-compatible client (OpenRouter or local Ollama are config alternatives). **No embeddings and no vector database:** the owner's profile is about one page, so the whole profile (without contact details) goes into the prompt and the LLM does the semantic matching.
+Groq through an OpenAI-compatible client (OpenRouter or local Ollama are config alternatives). **Embeddings (decided at M1):** profile sections are embedded with a small local model through `fastembed` (separate from the LLM provider), stored as plain JSON in `private/`. **No vector database.** The whole profile (without contact details) still goes into the LLM prompt; the LLM does the semantic matching.
 
 ### Infrastructure
 
@@ -127,7 +127,7 @@ Job sources ────────┘            │
 ### Build plan (5 small milestones)
 
 - **M0 Setup:** environment, `.gitignore`, `.env`, config, SQLite helper, README, a few tests.
-- **M1 Profile + score one job:** paste a job, get the score card. The core value.
+- **M1 Profile model:** PDF resume in `private/` becomes a structured, versioned profile with evidence and embeddings (`profile build`, `profile inspect`). Scoring one job follows. The core value.
 - **M2 Save and track:** store jobs and decisions; Streamlit dashboard.
 - **M3 Auto-fetch + daily run:** career-page feeds, Windows Task Scheduler, digest.
 - **M4 Polish:** stretch-job rules, reject reasons, cleanup.
@@ -154,7 +154,7 @@ Job sources ────────┘            │
 - **Company preferences:** none to avoid or prioritize for now.
 - **Private profile storage:** resolved by the local-first design (git-ignored `private/`).
 - **Simplicity is a requirement.** The owner does not want a complex project. Prefer the standard library, few dependencies, few files, plain functions. No frameworks or abstraction layers "for later".
-- **Stack (agreed):** Python 3.11 + Streamlit + stdlib `sqlite3` + Groq (OpenAI-compatible client). No FastAPI, Alembic, ORM, embeddings, vector DB or agent framework.
+- **Stack (agreed):** Python 3.11 + Streamlit + stdlib `sqlite3` + Groq (OpenAI-compatible client). No FastAPI, Alembic, ORM, vector DB or agent framework. Local embeddings via `fastembed` are allowed for the profile only (M1).
 - **Local-first:** app, database and profile run on the owner's machine; all private data lives in git-ignored `private/`; secrets in `.env`. Nothing private is ever stored in a Git-tracked path.
 - **Advisory-only is structural:** LLM steps have no tools; only dashboard actions can write owner decisions; no code path applies or sends anything.
 - **Strong matches are never silently lost:** excluded or failed jobs are kept and viewable with the reason. Quality is checked by eye on 10-15 real jobs (no formal labeled set required).
@@ -205,12 +205,15 @@ Job sources ────────┘            │
 - Repository and `.ai/` workflow set up.
 - Product concept, goals and user experience defined.
 - Architecture simplified to the lean plan above (owner-approved).
+- M0 Setup: implemented and passed review.
 
 ### In Progress
 
-- M0 Setup: `ARCHITECTURE.md` written; owner to update `TASK.md` to the lean M0, then Gemini implements.
+- M1 Profile Model: `ARCHITECTURE.md` written; Gemini implements next.
 
 ### Known Issues
 
-- `TASK.md` still describes the old heavy M0 (Alembic, pydantic-settings, CLI test commands, mypy, packaging) until the owner rewrites it.
+- `TASK.md` (M1) still says embeddings use "the same LLM provider" and lists target roles/locations as profile fields; `ARCHITECTURE.md` overrides both.
 - Company watchlist needed before M3 (owner to research).
+
+
