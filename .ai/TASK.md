@@ -38,14 +38,12 @@ Produce a clear, agreed architectural specification for the first version of the
 ## Constraints
 
 - The architecture must respect the advisory‑only rule: the agent must never apply to jobs or make decisions for the owner.
-- No technical stack choices or implementation details are to be made; the design should be technology‑agnostic.
 - Personal contact details must remain excluded from the public repository.
 - The `.ai/` workflow itself must not be altered.
 
 ---
 
 ## Out of Scope
-
 
 - Actual implementation or code.
 - Detailed data models, APIs, or database schemas.
@@ -96,7 +94,6 @@ Produce a clear, agreed architectural specification for the first version of the
 ---
 
 ## Implementation Notes
-
 
 - The architecture will be documented in `ARCHITECTURE.md` once completed.
 - Claude will be responsible for the design; no other agent will define the architecture.
