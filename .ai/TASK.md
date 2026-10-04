@@ -26,7 +26,7 @@ Set up the foundational project structure and tooling required for all subsequen
 
 ## Requirements
 
-- Create a `conda.yml` (or `environment.yml`) that defines the base Python 3.12+ environment and any required packages for the skeleton.
+- Create a `conda.yml` (or `environment.yml`) that defines the base Python 3.11 environment and any required packages for the skeleton.
 - Add a `pyproject.toml` with project metadata, dependencies, and build configuration.
 - Implement a lightweight configuration loader that reads from `.env` and supports overrides.
 - Provide a command‑line entry point (`cli.py` or similar) that can be invoked to run the application or run tests.
