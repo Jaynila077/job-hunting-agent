@@ -13,7 +13,7 @@ def call_llm(
     user_prompt: str,
     api_key: str,
     model: str = "openai/gpt-oss-20b",
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = 90.0,
     transport: httpx.BaseTransport | None = None,
 ) -> str:
     """Sends chat completion prompt to Groq and returns the response text."""
@@ -30,16 +30,21 @@ def call_llm(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.0,
+        "temperature": 0.1,
+        "max_completion_tokens": 12000,
     }
 
     try:
         with httpx.Client(timeout=timeout_seconds, transport=transport) as client:
-            response = client.post(GROQ_CHAT_URL, headers=headers, json=payload)
+            response = client.post(
+                GROQ_CHAT_URL,
+                headers=headers,
+                json=payload,
+            )
     except httpx.TimeoutException as exc:
         raise LLMError("LLM request timed out.") from exc
     except httpx.RequestError as exc:
-        raise LLMError("LLM network connection error.") from exc
+        raise LLMError(f"LLM network connection error: {exc}") from exc
 
     if response.status_code == 401:
         raise LLMError("LLM authentication failed: invalid GROQ_API_KEY.")
@@ -48,7 +53,14 @@ def call_llm(
     if response.status_code >= 500:
         raise LLMError(f"LLM service error (HTTP {response.status_code}).")
     if response.status_code != 200:
-        raise LLMError(f"LLM request failed with status code {response.status_code}.")
+        detail = ""
+        try:
+            err_json = response.json()
+            if "error" in err_json and "message" in err_json["error"]:
+                detail = f": {err_json['error']['message']}"
+        except Exception:
+            pass
+        raise LLMError(f"LLM request failed with status code {response.status_code}{detail}")
 
     try:
         data = response.json()

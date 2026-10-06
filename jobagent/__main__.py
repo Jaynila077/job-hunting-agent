@@ -16,7 +16,6 @@ from jobagent.profile import (
 
 
 def check_git_ignored(private_dir: Path, repo_root: Path) -> str:
-    """Checks whether the private directory is ignored by git."""
     probe_path = private_dir / ".probe"
     try:
         res = subprocess.run(
@@ -108,7 +107,7 @@ def cmd_profile_build(args: argparse.Namespace) -> int:
 
     print(f"Building profile from {settings.resume_path}...")
     try:
-        version, out_path, warnings = build_profile(
+        version, out_path, warnings, is_new = build_profile(
             pdf_path=settings.resume_path,
             profile_dir=settings.profile_dir,
             model_cache_dir=settings.model_cache_dir,
@@ -118,6 +117,10 @@ def cmd_profile_build(args: argparse.Namespace) -> int:
             embed_model=settings.embed_model,
             force=args.force,
         )
+        if not is_new:
+            print(f"profile unchanged (v{version:04d})")
+            return 0
+
         print(f"Profile built successfully: v{version:04d} -> {out_path}")
         if warnings:
             print("\nWarnings:")
@@ -139,7 +142,12 @@ def cmd_profile_inspect(_args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    envelope = get_latest_profile_envelope(settings.profile_dir)
+    try:
+        envelope = get_latest_profile_envelope(settings.profile_dir)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
     if envelope is None:
         print(
             "No profile found. Run 'python -m jobagent profile build' first.",
@@ -161,17 +169,16 @@ def main() -> None:
     subparsers.add_parser("info", help="Display environment and path configuration")
     subparsers.add_parser("init-db", help="Initialize SQLite database and run pending schema steps")
 
-    # Profile commands
     profile_parser = subparsers.add_parser("profile", help="Manage resume profile model")
     profile_subs = profile_parser.add_subparsers(dest="subcommand")
 
-    build_parser = profile_subs.add_parser("build", help="Extract and build profile from resume PDF")
+    build_parser = profile_subs.add_parser(
+        "build", help="Extract and build profile from resume PDF")
     build_parser.add_argument(
         "--force",
         action="store_true",
         help="Force rebuild even if resume is unchanged",
     )
-
     profile_subs.add_parser("inspect", help="Display current structured profile")
 
     args = parser.parse_args()

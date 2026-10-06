@@ -1,29 +1,12 @@
 # Code Review
 
-> This document contains the results of the code review for the current task.
->
-> The reviewer should compare the implementation against:
->
-> - `PROJECT.md`
-> - `TASK.md`
-> - `ARCHITECTURE.md`
-> - The actual repository
->
-> The reviewer's job is to **identify problems**, not rewrite the implementation.
-
----
-
 ## Task
 
-**Title:**
+**Title:** M1 – Profile Model, reviewed against `ARCHITECTURE.md` (which overrides `TASK.md` where they differ).
 
-M0 – Setup (lean). Reviewed against the lean `ARCHITECTURE.md` (the owner has not yet rewritten `TASK.md`, which still describes the old heavy M0; where they differ, `ARCHITECTURE.md` governs).
+**Review Status:** CHANGES REQUIRED
 
-**Review Status:**
-
-CHANGES REQUIRED (updated after owner's decisions: Issue 3 waived, Issue 5 downgraded to optional; see notes)
-
-Reviewed commit: `e934508` on `main`. Verification actually run by the reviewer (Python 3.13 in a Linux sandbox, not the owner's Windows/3.11 setup): `pytest` 7 passed; `ruff check .` passed; `ruff format --check .` reports 7 files would be reformatted; `python -m jobagent info`, `init-db` (run twice), invalid and empty `JOBAGENT_LOG_LEVEL` all exercised.
+**What I actually did:** read every changed file in the live repo (`jobagent/*.py`, `tests/*`, `requirements.txt`, `.env.example`, `README.md`), and ran the phone-redaction regex on sample text in a sandbox. **I could not run `pytest`, `ruff`, or `profile build`** (no packages, no network, and I did not read the resume or `.env`). Nothing below claims those pass.
 
 ---
 
@@ -31,14 +14,14 @@ Reviewed commit: `e934508` on `main`. Verification actually run by the reviewer 
 
 | Check | Status | Notes |
 |-------|--------|-------|
-| Requirements | ⚠️ | Core code is correct; 3 required files missing/misnamed, README truncated |
-| Architecture | ✅ | Follows the lean spec: flat package, stdlib sqlite3, three dependencies, no extras |
-| Functionality | ⚠️ | `info` reports a false "not ignored" warning when `private/` does not exist yet |
-| Error handling | ✅ | Invalid level exits 1 with one-line message; init-db errors handled |
-| Security | ✅ | `.gitignore` blocks `private/`, DBs, `.env.*`; `.env` never written; no secrets printed |
-| Performance | ✅ | No work at import time |
-| Tests | ⚠️ | 7 pass, but `test_gitignore.py` is missing; no CLI smoke test (optional) |
-| Code quality | ✅ | Small, readable, matches the spec |
+| Requirements | ⚠️ | Code covers the spec; README and several tests missing |
+| Architecture | ✅ | 3 flat modules, lazy `fastembed`, JSON versions in `private/profile/`, no extra dependencies |
+| Functionality | ❌ | Phone redaction removes year ranges (Issue 1) |
+| Error handling | ⚠️ | Good LLM error mapping; a few spec gaps (Minor) |
+| Security | ✅ | Key hidden from `repr`, no bodies in errors, nothing logged, output stays in `private/` |
+| Tests | ⚠️ | Config and LLM tests good; profile tests too thin (Issue 4) |
+| Lint | ❌ | `ruff check .` very likely fails on line length (Issue 3) |
+| End-to-end | ❌ | Never run: `private/` has no `profile/` folder (Issue 3) |
 
 ---
 
@@ -54,23 +37,13 @@ None.
 
 **Severity:** Important
 
-**File:**
+**File:** `jobagent/profile.py` (`PHONE_REGEX`, `redact_contact_details`)
 
-```text
-jobagent/__inint__.py
-```
+**Problem:** The phone pattern treats any run of 8+ digits as a phone number. I ran it: `2021-2025` becomes `[REDACTED]`, and so does `Batch 2025 2026`. Real phones were redacted correctly (`+91 98765 43210`, `9876543210`). `Dec 2023 - Feb 2024` and `CGPA 8.52/10` survive.
 
-**Problem:**
+**Why it matters:** Your education line ("SPPU, 2021-2025") loses its dates before the LLM sees it, so `period` will be wrong or empty. The evidence check still passes because it compares against the already-redacted text, so nothing flags the loss.
 
-The file is misspelled (`__inint__`), so the package has no `__init__.py`. It only works today because Python treats the folder as a namespace package. `import jobagent` has no `__version__` (confirmed: `NO __version__`, `__file__` is `None`).
-
-**Why it matters:**
-
-The spec requires `__init__.py` as the package marker and version. Later milestones, tools and tests that rely on a normal package or on `__version__` will behave unexpectedly.
-
-**Required Fix:**
-
-Rename `jobagent/__inint__.py` to `jobagent/__init__.py` (keep `__version__ = "0.1.0"`).
+**Required Fix:** Redact only phone-like numbers: for example, require a leading `+`, or at least 10 digits, or digit groups that are not two 4-digit years. Never redact a plain `YYYY-YYYY` or `YYYY YYYY` range. Add tests for year ranges, "2023-24", and the existing phone formats.
 
 ---
 
@@ -78,47 +51,29 @@ Rename `jobagent/__inint__.py` to `jobagent/__init__.py` (keep `__version__ = "0
 
 **Severity:** Important
 
-**File:**
+**File:** `README.md`
 
-```text
-.env.example (missing)
-```
+**Problem:** Not updated. It still says "M0 (setup) done", lists only `info` and `init-db`, and the folder map omits `llm.py`, `embed.py` and `profile.py`. It says nothing about the resume location, `GROQ_API_KEY`, `profile build` / `profile inspect`, or the first-run model download.
 
-**Problem:**
+**Why it matters:** The spec lists README updates as a required change. Without them, setup of M1 can't be followed from the repo.
 
-`.env.example` was not created. `ARCHITECTURE.md` lists it as a required file, `.gitignore` has the exception `!.env.example`, and the README setup step says to copy it.
-
-**Why it matters:**
-
-A fresh clone cannot follow the setup steps, and the supported variables are undocumented.
-
-**Required Fix:**
-
-Create `.env.example` with `JOBAGENT_PRIVATE_DIR`, `JOBAGENT_DB_FILE`, `JOBAGENT_LOG_LEVEL` (placeholder-safe default values, commented) and a note that `GROQ_API_KEY` is used from M1. No real values.
+**Required Fix:** Update the status line; add the two profile commands; say the resume goes in `private/` (name set by `JOBAGENT_RESUME_FILE`); mention that the first build downloads the embedding model to `private/models/`; update the folder map.
 
 ---
 
 ### Issue 3
 
-**Severity:** WAIVED by owner (test not wanted; not required for PASS)
+**Severity:** Important
 
-**File:**
-
-```text
-tests/test_gitignore.py (missing)
-```
+**File:** `jobagent/profile.py`, `tests/test_profile.py` (and an unverified end-to-end run)
 
 **Problem:**
+- **Lint:** `ruff` is set to `E` with line length 100. `profile.py` has many lines over 100 (the schema lines inside `system_prompt`, the early `return`, the `embeddings = [...]` line, the `NamedTemporaryFile` line, several in `format_profile_inspect`). `test_profile.py` has long lines too (`resume_text`, the JSON in `fake_json_reply`). `ruff check .` should fail.
+- **End-to-end:** `private/` contains `jobagent.db` and the resume PDF but **no `profile/` folder**, so `profile build` was never run successfully. The PDF is not named `resume.pdf` (the default), so `build` fails with "Resume file not found" until you set `JOBAGENT_RESUME_FILE` in `.env` (or rename the file).
 
-The spec requires a test that `.gitignore` covers `private/`, `*.db`, `*.sqlite*`, and `.env.*` with the `!.env.example` exception. The file does not exist.
+**Why it matters:** Acceptance requires `ruff check .` to pass and the real resume to produce a real profile. Neither is shown.
 
-**Why it matters:**
-
-Keeping private data out of the public repo is the main safety goal of M0, and nothing tests it.
-
-**Required Fix:**
-
-Add `tests/test_gitignore.py` that reads the repo's `.gitignore` and asserts those entries are present (including the `!.env.example` line, after `.env.*`).
+**Required Fix:** Wrap or split long lines (or build the prompt from a short list of joined strings), run `ruff check .` and `ruff format .`, then run `profile build` and `profile inspect` on the real resume and report the output (counts, warnings, version file). The PDF name issue is on the owner's side.
 
 ---
 
@@ -126,154 +81,44 @@ Add `tests/test_gitignore.py` that reads the repo's `.gitignore` and asserts tho
 
 **Severity:** Important
 
-**File:**
+**File:** `tests/test_profile.py`
 
-```text
-README.md
-```
+**Problem:** Only 4 tests. Missing from the spec: year-range redaction (would have caught Issue 1), the retry path, "failure writes nothing", unchanged resume → no new version, `--force` → v2, zero-padded latest-version selection, corrupt file handling, inspect not printing vectors or the key, and the "contact detail in output" error. The build test replaces `extract_text_from_pdf` by hand-assigning to the module instead of using `monkeypatch`.
 
-**Problem:**
+**Why it matters:** The versioning and failure behavior is the core of this milestone and is untested.
 
-The README is cut off (322 bytes). It ends mid-step at `conda activate jobagent` with an unclosed code block. It has no `.env` step, no run commands, no test/lint commands, no folder map.
-
-**Why it matters:**
-
-README completeness is an acceptance criterion; the next agent and the owner cannot follow it.
-
-**Required Fix:**
-
-Complete the README per `ARCHITECTURE.md`: Windows PowerShell setup (create and activate env, copy `.env.example` to `.env`), `python -m jobagent info`, `python -m jobagent init-db`, `pytest`, `ruff check .`, and a short folder map. Close all code fences.
-
----
-
-### Issue 5
-
-**Severity:** Minor (owner decision: cause is that `private/` does not exist yet on a fresh clone; the warning is a harmless false alarm that disappears after `init-db`. Fixing is optional.)
-
-**File:**
-
-```text
-jobagent/__main__.py (check_git_ignored, used by cmd_info)
-```
-
-**Problem:**
-
-`info` runs `git check-ignore -q <private_dir>`. The `.gitignore` pattern is `private/` (directories only). When the `private/` folder does not exist yet, Git cannot know it is a directory, so the command returns "not ignored" even though it is. Reproduced: on a fresh clone `python -m jobagent info` prints `Private ignored: no` plus the warning "NOT ignored by Git"; after `init-db` creates the folder it prints `yes`.
-
-**Why it matters:**
-
-A false safety warning on first run trains the owner to ignore the warning, which defeats its purpose. `git check-ignore -q private/x` on a path inside the folder returns the correct result whether or not the folder exists (verified).
-
-**Required Fix:**
-
-Check a path inside the private directory (for example `private_dir / ".probe"`) instead of the directory itself. Also treat Git exit code 128 (not a repository, or path outside the repository) as `unknown`, not `no`.
+**Required Fix:** Add those tests (fake LLM and fake embedder, no network, no real resume), and use `monkeypatch.setattr` for the PDF function.
 
 ---
 
 # Minor Issues
 
-- **File:** `jobagent/db.py` (`init_db`)
-  - **Problem:** Python's `sqlite3` does not open a transaction before DDL statements, so `with conn:` does not make a schema step plus the `user_version` update atomic. A step that fails midway (several statements) can leave a half-applied schema with the old version. Harmless in M0 (zero steps) but the mechanism is meant for M2+.
-  - **Suggested Fix:** Run each step inside an explicit `BEGIN`/`COMMIT` (with rollback on error), or add a short comment that steps must be a single idempotent statement. Add a test where a step fails midway.
-
-- **File:** `jobagent/config.py` (`get_val`)
-  - **Problem:** An environment variable that is set but empty (`JOBAGENT_LOG_LEVEL=`) overrides `.env` and then fails validation with a confusing message ("Invalid JOBAGENT_LOG_LEVEL: .").
-  - **Suggested Fix:** Treat empty strings as unset.
-
-- **File:** `.gitignore`
-  - **Problem:** Adds `.vscode/` (not in the spec) and the file has no final newline. Harmless but undocumented.
-  - **Suggested Fix:** Keep or remove; mention in the final report. Add a trailing newline.
-
-- **File:** all `.py` files in `jobagent/` and `tests/`
-  - **Problem:** `ruff format --check .` would reformat 7 files (missing final newlines and similar). `ruff check .` passes, which is what the spec requires.
-  - **Suggested Fix:** Run `ruff format .` once so formatting is consistent.
-
-- **File:** `.ai/TASK.md` (owner)
-  - **Problem:** Still describes the old M0 (Alembic, `pyproject` metadata, mypy, CLI test commands). The implementation correctly followed `ARCHITECTURE.md`, but the task file and the code disagree.
-  - **Suggested Fix:** Owner rewrites `TASK.md` to the lean M0 (or marks M0 complete) before M1.
-
-- **File:** `jobagent/__main__.py`
-  - **Problem:** No test runs the CLI commands (spec marked a subprocess smoke test as optional).
-  - **Suggested Fix:** Optional: one subprocess test for `info` with a temporary `JOBAGENT_PRIVATE_DIR`.
+- **`profile.py` / `__main__.py` (unchanged resume):** the CLI prints "Profile built successfully: vNNNN" even when nothing was built. The spec says "profile unchanged (vN)". Also, the unchanged check doesn't compare `schema_version`.
+- **`profile.py` (retry):** the retry only triggers when an item ends up with zero evidence. A first reply that fails pydantic parsing (for example an empty `skills` list) gets no retry. The retry reply is parsed without the wrapper used for the first reply.
+- **`profile.py` (error text):** pydantic validation messages can include fragments of the reply or resume text, and `cmd_profile_build` prints them. Print a generic message plus the error count instead.
+- **`profile.py` (`get_latest_profile_envelope`):** swallows all exceptions, so a corrupt latest file shows as "No profile found". Spec says report it plainly.
+- **`profile.py` (inspect):** does not re-run validation against the current PDF as the spec describes; only the staleness check is done.
+- **`profile.py` (`validate_profile`):** the contact-leak check covers emails and handles only; the spec also lists URLs and phone patterns (add after fixing Issue 1).
+- **`profile.py` (`build_profile`):** `zip(..., strict=False)` would silently truncate if the embedder returns fewer vectors; use `strict=True`.
+- **Evidence strength:** very short snippets (for example "Python") match almost anywhere. Consider a small minimum length for non-skill items.
 
 ---
 
 # Requirement Verification
 
-Checked against the acceptance criteria in `ARCHITECTURE.md`.
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| `environment.yml` creates Python 3.11 env | ✅ | Correct content; creation not run by reviewer (no conda here) |
-| `requirements.txt` has only dotenv, pytest, ruff | ✅ | Exactly those three |
-| `info` and `init-db` work and are idempotent | ⚠️ | Work and idempotent (run twice); `info` false warning on first run (Issue 5) |
-| Config: `.env`, env precedence, unknown keys ignored, `.env` never modified | ✅ | Tested; empty-string edge is Minor |
-| Standard-library logging | ✅ | `log.py` |
-| SQLite pragmas and `user_version` mechanism tested | ✅ | 3 DB tests pass; atomicity is Minor |
-| `.gitignore` excludes `private/`, DB and env files; test passes | ⚠️ | Patterns correct; test missing (Issue 3) |
-| `pytest` and `ruff check .` pass | ✅ | 7 passed; ruff clean |
-| README works on clean Windows machine | ❌ | Truncated (Issue 4); `.env.example` missing (Issue 2) |
-| `.ai/` and `tools/edit_task.ps1` unchanged; nothing extra | ✅ | Only `.vscode/` added to `.gitignore` |
-| `__init__.py` package marker with version | ❌ | Misspelled (Issue 1) |
-
----
-
-# Architecture Verification
-
-### Correct
-
-- Flat `jobagent/` package, `python -m jobagent`, exactly two commands.
-- Stdlib `sqlite3` with `PRAGMA user_version`; empty `SCHEMA_STEPS`; foreign keys, WAL, busy timeout set.
-- `pyproject.toml` contains tool settings only; no packaging, no extra dependencies.
-- Real environment variables win over `.env`; unknown keys (such as `GROQ_API_KEY`) ignored; relative paths resolve from the repo root; no directory creation at import time.
-
-### Deviations
-
-- Missing `__init__.py` (typo), `.env.example`, `tests/test_gitignore.py`; incomplete README.
-- `.vscode/` added to `.gitignore`.
-
-### Justified Deviations
-
-- None needed.
-
----
-
-# Security
-
-- No issues in what was delivered: `private/`, databases, `.env.*` ignored; `.env` is only read.
-- The false "not ignored" warning (Issue 5) is a safety-signal accuracy problem, not a leak.
-
----
-
-# Performance
-
-- No concerns.
-
----
-
-# Error Handling
-
-- Invalid log level: clear one-line error, exit code 1 (verified).
-- Empty-string variable: confusing message (Minor).
-- `init-db` failures are caught and reported with exit code 1.
-
----
-
-# Testing
-
-## Existing Tests
-
-- `test_config.py` (4 tests): defaults, `.env` loading with unknown key, environment precedence, invalid level.
-- `test_db.py` (3 tests): pragmas and folder creation, empty steps, two-step idempotence.
-
-## Missing Tests
-
-- `.gitignore` coverage (required).
-- Optional CLI smoke test; failed-midway schema step; empty-string environment variable.
-
-## Failed Tests
-
-- None. 7 passed.
+| Requirement (`ARCHITECTURE.md`) | Status | Notes |
+|---|---|---|
+| Resume PDF read from `private/`, nothing tracked | ✅ | `private/` ignored; default filename differs from the actual file (owner action) |
+| Profile model, no name/contact/targets | ✅ | Models match the spec |
+| Evidence per item, checked against redacted text | ✅ | Works; weak on very short snippets (Minor) |
+| Local embeddings, lazy import, cache in `private/models` | ✅ | Matches the spec |
+| Versioned atomic JSON, no-op on unchanged | ✅ | Logic correct; message misleading (Minor) |
+| `profile inspect` summary, stale flag | ⚠️ | Works; no re-validation (Minor) |
+| Redaction before network call | ⚠️ | Happens, but over-redacts years (Issue 1) |
+| No secrets or text in logs | ✅ | Nothing logged; terminal error text can leak fragments (Minor) |
+| `pytest` and `ruff check .` pass | ❌ | Not shown; ruff likely fails |
+| No extra dependencies | ✅ | Exactly the four listed |
+| `info`, `init-db`, `.ai/` unchanged | ✅ | `info` also fixed the earlier git probe issue and shows resume/key status |
 
 ---
 
@@ -281,40 +126,31 @@ Checked against the acceptance criteria in `ARCHITECTURE.md`.
 
 > Do not change these during fixes.
 
-- `config.py` precedence logic and path handling.
-- `db.py` connection setup and `init_db` step mechanism (only add transaction safety).
-- `log.py` and the two-command `__main__.py` structure.
-- `environment.yml`, `requirements.txt`, `pyproject.toml`.
-- Tests that exist, and the `.gitignore` patterns.
+- `config.py`: new settings with defaults, empty values treated as unset, `groq_api_key` hidden from `repr`; tests updated and thorough.
+- `llm.py`: clean error mapping with no key or body in messages; `MockTransport` tests.
+- `embed.py`: lazy import, cache directory, rounded floats.
+- CLI wiring in `__main__.py` and the corrected `check_git_ignored`.
+- `requirements.txt` and `.env.example`.
 
 ---
 
 # Required Changes
 
-- [ ] Rename `jobagent/__inint__.py` to `jobagent/__init__.py`.
-- [ ] Create `.env.example`.
-- [x] ~~Add `tests/test_gitignore.py`~~ (waived by owner).
-- [ ] Complete `README.md` (full Windows setup, run, test, folder map; close code fences).
-- [ ] (Optional) Fix `check_git_ignored` to test a path inside `private/` and treat Git exit code 128 as `unknown`.
-- [ ] (Minor) Make schema steps transactional or document the limitation; treat empty environment values as unset; run `ruff format .`; add trailing newline to `.gitignore`.
-- [ ] Re-run `pytest`, `ruff check .`, `python -m jobagent info` (with `private/` missing, expect `yes`), `init-db` twice, and report exact output.
+- [ ] Fix phone redaction so year ranges survive; add tests (Issue 1).
+- [ ] Update `README.md` (Issue 2).
+- [ ] Make `ruff check .` pass; run `profile build` and `profile inspect` on the real resume and report the output (Issue 3).
+- [ ] Add the missing profile tests (Issue 4).
+- [ ] (Minor) "unchanged" message, retry coverage, generic parse-error text, corrupt-file message, `strict=True`.
+- [ ] Re-run `pytest`, `ruff check .`, `python -m jobagent info`, and report the exact output.
 
 ---
 
 # Final Assessment
 
-**Status:**
+**Status:** CHANGES REQUIRED
 
-CHANGES DONE
+**Summary:** The design was followed well and the supporting modules are clean. One real bug (dates removed by redaction), a lint failure, an unrun end-to-end build, a missing README update, and thin profile tests block a PASS.
 
-**Summary:**
+**Blocking Issues:** 4 Important (Issues 1–4), 0 Critical.
 
-The code that exists is clean, small and matches the lean design. What is missing is three required files, a truncated README, and one real bug (false "not ignored" warning on first run).
-
-**Blocking Issues:**
-
-3 Important (Issues 1, 2, 4), 0 Critical. Issue 3 waived, Issue 5 optional.
-
-**Recommendation:**
-
-Fix Issues 1, 2 and 4 (all small), then send the verification output. After that M0 should pass and M1 can start. The owner should also rewrite `TASK.md` to the lean M0 or mark it done.
+**Recommendation:** Fix Issues 1–4, run the real build, send the output, and I'll re-check.
