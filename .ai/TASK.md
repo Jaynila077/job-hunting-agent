@@ -11,22 +11,23 @@
 
 **Title:**
 
-M3 – Save and Track
+M4 – Auto‑fetch + Daily Run
 
 **Type:**
-Implementation (job storage, duplicate handling, decision tracking, and Streamlit dashboard)
+Implementation (job auto‑fetching, daily scheduling, persistence, duplicate handling, decision tracking, and Streamlit dashboard)
 
 ---
 
 ## Objective
 
-Implement the job persistence layer and user decision workflow: store jobs and their analysis results, detect and prevent duplicates, record owner decisions (saved, rejected, applied, interviewing), and provide a Streamlit dashboard with a manual job addition flow.
+Implement the automated job discovery and daily execution pipeline: fetch new job postings from career‑page feeds and other sources, store jobs and their analysis results, detect and prevent duplicates, record owner decisions (saved, rejected, applied, interviewing), and provide a Streamlit dashboard with a manual “Add job” flow.
 
 ---
 
 ## Requirements
 
-- Persist jobs and their analysis results in a non‑Git‑tracked location (e.g., SQLite or `private/jobs.json`).
+- Fetch new job postings from configured career‑page feeds and other sources on a daily schedule.
+- Persist jobs and their analysis results in a non‑Git‑tracked location (e.g., SQLite in `private/`).
 - Detect duplicates using a unique key (e.g., company + title + location + URL) and prevent re‑adding the same job.
 - Record owner decisions (saved, rejected, applied, interviewing) with optional rejection reasons.
 - Provide a Streamlit dashboard that lists jobs by status and allows the owner to change status via buttons.
@@ -38,15 +39,15 @@ Implement the job persistence layer and user decision workflow: store jobs and t
 ## Constraints
 
 - Use the existing environment and tooling set up in M0 (Miniconda, `pyproject.toml`, logging, SQLite, etc.).
-- No business logic beyond job persistence, duplicate handling, decision tracking, and dashboard UI is required.
-- The job data must be stored in a location that is not tracked by Git (e.g., `private/jobs.json` or a SQLite table).
+- No business logic beyond job persistence, duplicate handling, decision tracking, auto‑fetching, and dashboard UI is required.
+- The job data must be stored in a location that is not tracked by Git (e.g., `private/jobs.db`).
 
 ---
 
 ## Out of Scope
 
 - Full job matching or recommendation logic beyond the MVP scoring.
-- Any changes to the overall architecture beyond the job persistence and dashboard component.
+- Any changes to the overall architecture beyond the job persistence, auto‑fetching, and dashboard component.
 - Embedding storage beyond the job analysis itself.
 
 ---
@@ -60,7 +61,7 @@ Implement the job persistence layer and user decision workflow: store jobs and t
 
 ## Acceptance Criteria
 
-> The job persistence and dashboard implementation is complete only when all applicable criteria are satisfied.
+> The job persistence, auto‑fetching, and dashboard implementation is complete only when all applicable criteria are satisfied.
 
 - [ ] Jobs and their analysis results are stored in a non‑Git‑tracked location.
 - [ ] Duplicate jobs are detected and prevented from being added again.
