@@ -30,6 +30,7 @@ def step_1_create_jobs_table(conn: sqlite3.Connection) -> None:
             flags_json TEXT,
             outcome TEXT NOT NULL,
             outcome_reason TEXT,
+            outcome_snippet TEXT,
             score INTEGER,
             verdict TEXT,
             matches_json TEXT,

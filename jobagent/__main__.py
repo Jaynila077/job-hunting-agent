@@ -7,6 +7,7 @@ from jobagent.config import load_settings
 from jobagent.db import connect, init_db
 from jobagent.embed import embed_texts
 from jobagent.jobs import (
+    check_job_text_length,
     format_job_inspect,
     get_job_by_id,
     get_latest_job,
@@ -76,15 +77,16 @@ def cmd_init_db(_args: argparse.Namespace) -> int:
         return 1
 
     setup_logging(settings.log_level)
+    conn = connect(settings.db_path)
     try:
-        conn = connect(settings.db_path)
         version = init_db(conn)
-        conn.close()
         print(f"Database initialized at {settings.db_path} (user_version = {version})")
         return 0
     except Exception as e:
         print(f"Error initializing database: {e}", file=sys.stderr)
         return 1
+    finally:
+        conn.close()
 
 
 def cmd_profile_build(args: argparse.Namespace) -> int:
@@ -214,7 +216,13 @@ def cmd_job_paste(args: argparse.Namespace) -> int:
         raw_text = sys.stdin.read()
 
     try:
-        conn = connect(settings.db_path)
+        check_job_text_length(raw_text)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    conn = connect(settings.db_path)
+    try:
         init_db(conn)
 
         def llm_caller(sys_p: str, usr_p: str) -> str:
@@ -234,7 +242,6 @@ def cmd_job_paste(args: argparse.Namespace) -> int:
             source=args.source or "pasted",
             url=args.url,
         )
-        conn.close()
 
         print("-" * 60)
         title = record.get("title") or "N/A"
@@ -263,6 +270,8 @@ def cmd_job_paste(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
         return 1
+    finally:
+        conn.close()
 
 
 def cmd_job_inspect(args: argparse.Namespace) -> int:
@@ -272,25 +281,27 @@ def cmd_job_inspect(args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
+    if not settings.db_path.is_file():
+        print("Error: No jobs found in database.", file=sys.stderr)
+        return 1
+
     conn = connect(settings.db_path)
-    init_db(conn)
+    try:
+        if args.id is not None:
+            job = get_job_by_id(conn, args.id)
+            if job is None:
+                print(f"Error: Job ID {args.id} not found.", file=sys.stderr)
+                return 1
+        else:
+            job = get_latest_job(conn)
+            if job is None:
+                print("Error: No jobs found in database.", file=sys.stderr)
+                return 1
 
-    if args.id is not None:
-        job = get_job_by_id(conn, args.id)
-        if job is None:
-            print(f"Error: Job ID {args.id} not found.", file=sys.stderr)
-            conn.close()
-            return 1
-    else:
-        job = get_latest_job(conn)
-        if job is None:
-            print("Error: No jobs found in database.", file=sys.stderr)
-            conn.close()
-            return 1
-
-    conn.close()
-    print(format_job_inspect(job))
-    return 0
+        print(format_job_inspect(job))
+        return 0
+    finally:
+        conn.close()
 
 
 def main() -> None:
