@@ -70,7 +70,11 @@ The LLM calls and the clock are passed in as callables (as in M1) so `jobs.py` f
 
 ### Constants (top of `jobs.py`; the owner changes rules by editing these)
 
-- Allowed locations: Pune, Mumbai, Bangalore, Hyderabad, plus remote. A small alias map for matching (for example Bengaluru → Bangalore, Bombay and Navi Mumbai → Mumbai, Secunderabad → Hyderabad). Keep it short; the LLM is asked to normalize areas to a city (Hinjewadi → Pune).
+- Allowed locations: Pune, Mumbai, Bangalore, Hyderabad, plus remote. The owner wants **all areas** of Pune and Mumbai. A small alias map for matching (architect-approved list below); the LLM is also asked to normalize areas to a city (Hinjewadi → Pune). Keep the list as a constant the owner can edit; do not add other cities.
+  - Pune: Pimpri-Chinchwad, Pimpri Chinchwad, Hinjewadi, Hinjawadi, Kharadi, Baner, Wakad, Hadapsar, Magarpatta, Viman Nagar, Kothrud, Aundh, Koregaon Park, Yerwada, Talawade, Talegaon
+  - Mumbai: Bombay, Navi Mumbai, Thane, Vashi, Airoli, Belapur, Panvel, Powai, Andheri, BKC, Bandra, Goregaon, Malad, Lower Parel, Worli, Mulund, Ghatkopar, Kalyan
+  - Bangalore: Bengaluru, Whitefield, Koramangala, Electronic City, Marathahalli, Bellandur, Indiranagar, Hebbal, Manyata, Sarjapur, HSR Layout
+  - Hyderabad: Secunderabad, Hitec City, HITEC City, Gachibowli, Madhapur, Kondapur, Financial District, Uppal, Nanakramguda
 - `MAX_YEARS = 3` (exclude only when the minimum required experience is above this).
 - `STRONG_MIN = 7`, `STRETCH_MIN = 5` (verdict thresholds; the verdict is derived in Python from the score, never by the LLM).
 - Job text limits: at least 100 and at most 20,000 characters.
@@ -90,14 +94,14 @@ Fields produced by LLM call 1 (all optional except `title`):
 
 ### Evidence rule (protects strong matches from silent loss)
 
-**An exclusion may only rest on a snippet that appears verbatim in the pasted text.** After normalizing both sides with `normalize_snippet` from `profile.py`, the `pay_text`, `location_text` or `experience_text` that justifies an exclusion must be found in the job text. If it is not found, treat that field as unknown, add a flag such as "location could not be verified", and do not exclude. This mirrors the M1 evidence check and stops a wrong extraction from hiding a good job.
+**An exclusion may only rest on a snippet that appears verbatim in the pasted text, and the structured value must agree with that snippet.** After normalizing both sides with `normalize_snippet` from `profile.py`, the `pay_text`, `location_text` or `experience_text` that justifies an exclusion must be found in the job text. If it is not found, treat that field as unknown, add a flag such as "location could not be verified", and do not exclude. Because a verbatim snippet can still be misclassified by the LLM, Python also checks the value against the snippet: for experience, the number used as `experience_min_years` must appear as a digit string in `experience_text` (for example "4+ years" supports 4, not 2); for pay, `unpaid` is accepted only if the snippet contains an unpaid-style phrase (for example "unpaid", "no stipend", "without pay", "voluntary", "volunteer"); for location, each excluded city name or its alias must appear in `location_text`. If the check fails, treat the field as unknown, flag it, and do not exclude. This mirrors the M1 evidence check and stops a wrong extraction from hiding a good job.
 
 ### Filter rules (deterministic Python, run after extraction, before scoring)
 
 Run all rules; the first failing rule gives the exclusion reason (rules are independent).
 
 1. **Unpaid:** exclude only if `pay_status` is `unpaid` and its verified `pay_text` exists. `not_stated` is never excluded; it adds the flag "pay not stated".
-2. **Location:** pass if any normalized city is in the allowed list (hybrid or onsite included; a posting that lists several cities passes if one is allowed). Else pass if `work_mode` is `remote` and `remote_scope` is `india`, `global` or `unspecified` (`unspecified` adds the flag "remote scope not stated"). Else pass with the flag "location not stated" if the location is unknown or unverified. Otherwise exclude, with the cities named in the reason.
+2. **Location:** pass if any normalized city is in the allowed list (hybrid or onsite included; a posting that lists several cities passes if one is allowed). Else pass if `work_mode` is `remote` and `remote_scope` is `india`, `global` or `unspecified` (`unspecified` adds the flag "remote scope not stated"). Else pass with the flag "location not stated" if the location is unknown or unverified, or with the flag "only country stated (India)" if the posting names no city and no remote mode. Otherwise exclude, with the cities named in the reason.
 3. **Experience:** exclude only if verified `experience_min_years` is greater than `MAX_YEARS`. Unknown experience passes with the flag "experience not stated".
 
 An excluded job is stored with `outcome = 'excluded'`, the reason and the supporting snippet, and is **not scored** (no second LLM call).
@@ -131,7 +135,7 @@ One table, `jobs`. Suggested columns (implementer may adjust names, not meaning)
 - `flags_json` (list of strings), `outcome`, `outcome_reason`
 - analysis (null unless scored): `score`, `verdict`, `matches_json`, `gaps_json`, `explanation`, `profile_version`, `llm_model`
 
-Write each job with **one INSERT at the end of the flow** (no half-written rows). `job paste` calls `connect` and `init_db` itself so the owner does not need to run `init-db` first. Use parameterized queries only.
+Create the table with a single `CREATE TABLE IF NOT EXISTS` statement (add any index as its own `IF NOT EXISTS` statement run before the version is recorded), because `sqlite3` does not make DDL plus the version update atomic. Write each job with **one INSERT at the end of the flow** (no half-written rows). `job paste` calls `connect` and `init_db` itself so the owner does not need to run `init-db` first. Use parameterized queries only.
 
 ### CLI
 
@@ -228,6 +232,7 @@ No test may use the network, a real API key or a real resume. Pass fake LLM call
 - **Input:** empty, too short, too long rejected; `--file` read as UTF-8.
 - **Extraction:** valid JSON parsed; fences and preamble stripped; missing title fails; invalid JSON retried once then stored as `failed` with raw text.
 - **Evidence rule:** an `unpaid` claim whose snippet is not in the text does **not** exclude (flag instead); a verified one does. Same for location and experience.
+- **Value-vs-snippet check:** experience min 4 with snippet "2+ years" does not exclude (flag); "unpaid" with a snippet that only says "paid leave policy" does not exclude; a city that is not in the snippet is not used to exclude.
 - **Filters:** unpaid excluded; `not_stated` pay passes with flag; allowed city passes; alias (Bengaluru) passes; multi-city with one allowed passes; US-only remote excluded; India remote and global remote pass; unspecified remote passes with flag; unknown location passes with flag; experience min 4 excluded, min 3 passes, "0-1" passes, unknown passes with flag.
 - **Scoring:** valid reply stored with correct verdict boundaries (4, 5, 6, 7); score out of range or non-integer triggers retry; unsupported `profile_item` dropped with warning; retry succeeds; second failure stored as `failed`.
 - **Outcomes:** excluded jobs trigger no second LLM call; transient `LLMError` stores nothing; success stores exactly one row; no profile or no key fails before any LLM call.
@@ -296,7 +301,7 @@ The implementation agent MUST NOT: add duplicate detection, decision statuses, a
 
 ## Open Questions
 
-1. **Allowed-location aliases:** the implementer proposes the short alias list; the architect reviews it.
+1. **Allowed-location aliases:** resolved. The architect-approved list is under "Constants". The implementer may add a missing common spelling and must report it.
 2. **Groq model reliability:** if `openai/gpt-oss-20b` returns malformed JSON often on real postings, the implementer reports it and does not switch models without approval.
 
 ---
