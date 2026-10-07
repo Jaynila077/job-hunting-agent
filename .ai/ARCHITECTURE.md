@@ -1,308 +1,340 @@
 # Implementation Specification
 
 > This document defines **how the current task should be implemented**.
-> The implementation agent treats it as the primary technical specification, while still verifying all assumptions against the actual codebase.
+>
+> It is normally produced or updated by the architecture/reasoning agent after inspecting the repository.
+>
+> The implementation agent should treat this document as the primary technical specification, while still verifying all assumptions against the actual codebase.
 
-> **Handoff note.** This file is overwritten for every task. Durable context is in `PROJECT.md`. The owner wants this project **simple**: few files, few dependencies, plain functions. Where this document and `TASK.md` differ, follow this document and report it (see "Overrides and Clarifications of TASK.md"). **Lessons from M1 review:** keep every line at 100 characters or fewer, run `ruff check .` before reporting, write the tests listed below (not a token few), and report only commands you actually ran.
+> **Handoff note.** This file is overwritten for every task. The durable context (lean stack, decisions, milestones M0-M5) is in `PROJECT.md`.
 
 ---
 
 ## Task
 
-**Title:** M2 – Job Analysis + Matching MVP
+**Title:**
 
-**Objective:** Accept one pasted job posting, extract structured job details with an LLM, apply deterministic rule-based filters, score the job against the owner's latest profile with matches, gaps and an explanation, store the result in SQLite, and show it with `job inspect`.
+M3 – Save and Track
 
----
+**Objective:**
 
-## Overrides and Clarifications of TASK.md
-
-1. **Storage is SQLite** (the existing `private/jobagent.db`), not `jobs.json`. One new table, `jobs`, added as schema step 1.
-2. **Input method:** `job paste` reads the posting from standard input, or from a file with `--file`. A multi-line posting cannot be passed reliably as a PowerShell argument.
-3. **Scope boundary with M3:** M2 stores each pasted job as its own row. **No duplicate detection, no decision statuses (saved/rejected/applied/interviewing), no dashboard, no job list.** M3 adds those and may extend the table.
-4. **Embeddings are not used.** The scorer sees the profile as text only.
-5. Ignore "Relevant Areas" wording and any implication that the implementer defines the analysis; this document does.
+Give every job a decision lifecycle (new → saved / rejected / applied / interviewing), stop the same posting from being analyzed twice, and add a Streamlit dashboard that lists jobs by status with action buttons and a manual "Add job" form.
 
 ---
 
 ## Current Architecture
 
-Verified against the repository (M0 and M1 complete).
+Repository inspected on `main`, after M2.
 
-- Flat package `jobagent/`, run as `python -m jobagent`. Modules: `config.py`, `db.py`, `embed.py`, `llm.py`, `log.py`, `profile.py`, `__main__.py`.
-- `__main__.py`: argparse with `info`, `init-db`, and a nested `profile` command (`build`, `inspect`). Each `cmd_*` function returns an exit code; errors go to stderr; `setup_logging(settings.log_level)` is called near the top of commands that do work.
-- `config.py`: frozen `Settings` including `db_path`, `profile_dir`, `llm_model`, `groq_api_key` (hidden from `repr`), `resume_path`. **No new settings are needed.**
-- `db.py`: `connect()` (WAL, foreign keys, busy timeout), `init_db(conn, steps=None)` applying `SCHEMA_STEPS` in order and tracking `PRAGMA user_version`. `SCHEMA_STEPS` is currently empty. The live `private/jobagent.db` is at `user_version` 0.
-- `llm.py`: `call_llm(system_prompt, user_prompt, api_key, model, ...)` returns reply text; raises `LLMError` with safe messages. Used with `temperature` 0.1.
-- `profile.py`: `get_latest_profile_envelope(profile_dir)` (returns `ProfileEnvelope` or `None`; raises `ValueError` if the latest file is corrupt), `compute_sha256`, `normalize_snippet`, pydantic models. `build_profile` takes the LLM call as a plain callable so tests pass fakes. **M2 follows the same pattern.**
-- Tests use `tmp_path` and `monkeypatch`; no network, no real key, no real resume.
-- `private/` is git-ignored, so the database and everything stored in it stay private.
+### Relevant Components
+
+- **`jobagent/db.py`:** `SCHEMA_STEPS` has one step (`step_1_create_jobs_table`), `user_version = 1`. `init_db` applies pending steps inside `BEGIN IMMEDIATE` / `COMMIT`, already transactional and idempotent — reuse this mechanism unchanged.
+- **`jobagent/jobs.py`:** `jobs` table has no status/decision/dedup columns today. `process_job()` is the single entry point: extract → verify evidence → filter → score → `insert_job_record()`. Outcomes are `scored` / `excluded` / `failed`. `JobExtraction` already carries verified `title`, `company`, `cities`, `location_text`. `insert_job_record` takes a flat dict matching named SQL params — adding columns means adding keys to every record dict built in `process_job` (the `failed`, `excluded`, and `scored` branches) and to the `INSERT` statement.
+- **`jobagent/profile.py`:** has `normalize_snippet()` (lowercases, collapses whitespace) — reuse this for building a dedup key instead of writing a second normalizer.
+- **`jobagent/__main__.py`:** argparse with `info`, `init-db`, `profile build/inspect`, `job paste/inspect`. `cmd_job_paste` builds a `llm_caller` closure and calls `process_job` directly — the dashboard's "Add job" flow should call the same `process_job` function, not shell out to the CLI.
+- **`jobagent/config.py`:** `Settings` frozen dataclass from `.env`/environment, already has every path/model setting M3 needs. No change required.
+- **`requirements.txt`:** `python-dotenv`, `pytest`, `ruff`, `pydantic`, `httpx`, `pypdf`, `fastembed`. **No `streamlit` yet.**
+- **Tests:** `tests/test_config.py`, `tests/test_db.py`, `tests/test_gitignore.py`, plus (from M1/M2, not shown above but implied by `profile.py`/`jobs.py`) profile and job tests. All use temp DBs/dirs, no network.
+
+### Current Data Flow
+
+```text
+job paste ──► process_job() ──► extract (LLM) ──► verify evidence ──► filter rules ──► score (LLM) ──► insert_job_record() ──► SQLite jobs table
+job inspect ──► get_job_by_id / get_latest_job ──► format_job_inspect()
+```
+
+There is currently no concept of a job's decision status, and no duplicate check — pasting the same posting twice creates two independent rows (noted as a known gap in the M2 README).
 
 ---
 
 ## Proposed Architecture
 
-### Data flow
+### Components
+
+- **`jobagent/db.py` (modify):** add `step_2_add_decision_and_dedup_columns`, appended to `SCHEMA_STEPS` (becomes `user_version = 2` on next `init_db`). `ALTER TABLE` adds:
+  - `status TEXT NOT NULL DEFAULT 'new'`
+  - `decision_reason TEXT`
+  - `decided_at TEXT`
+  - `dedup_key TEXT`
+
+  Then `CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs (dedup_key);` and `CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);`. SQLite backfills `status='new'` on existing rows automatically via the column default. This follows the exact pattern of `step_1`, inside the existing transactional step runner — no changes to `connect`, `init_db`, or the step-runner itself.
+
+- **`jobagent/jobs.py` (modify):**
+  - Add `compute_dedup_key(title: str, company: str | None, cities: list[str], url: str | None) -> str`. Build from `normalize_snippet(title)`, `normalize_snippet(company or "")`, the sorted normalized `cities` list (falls back to empty string when no verified city), and `normalize_snippet(url or "")`. Join with a fixed separator (e.g. `"|"`). This runs after `verify_evidence_and_values`, so it only uses evidence-checked fields — an unverifiable title/company never happens (title is required by the schema; company/cities may be `None`/empty, which is fine, they just make the key coarser).
+  - Add `find_duplicate(conn, dedup_key: str) -> dict[str, Any] | None`: `SELECT * FROM jobs WHERE dedup_key = ? ORDER BY id ASC LIMIT 1`. Only matches rows with a non-null, non-empty `dedup_key` (guard in Python or `WHERE dedup_key = ? AND dedup_key != ''`).
+  - Extend `process_job()`: after Step 2 (evidence verification) and before Step 3 (filter rules), compute `dedup_key` and call `find_duplicate`. If a match exists, insert a row with `outcome="duplicate"`, `outcome_reason=f"Duplicate of job {existing['id']}"`, `status="new"`, skip filtering and skip the scoring LLM call entirely (this is the point — avoid re-spending a Groq call on a posting already seen), and return early. This keeps "never silently lose a job" (PROJECT.md) intact: the duplicate is still stored and visible via `job inspect`, just flagged instead of re-scored.
+  - Every record dict built in `process_job` (`failed`-on-extraction, `excluded`, `scored`, and the new `duplicate` branch) gains three new keys: `"status": "new"`, `"decision_reason": None`, `"decided_at": None`. `dedup_key` is `None` for the extraction-failure branch (no verified title yet) and the computed value everywhere else.
+  - `insert_job_record()`: add `status, decision_reason, decided_at, dedup_key` to both the column list and the `:name` placeholders in the `INSERT` statement.
+  - `format_job_inspect()`: add a `Status:` line after the outcome block, and show `decision_reason`/`decided_at` when `status != "new"`.
+
+- **`jobagent/decisions.py` (new):** the only new module, kept small and separate from `jobs.py` (which is about analysis, not the decision workflow) per the "no unnecessary abstraction, but don't bolt unrelated concerns into one file" convention already visible in the codebase (`profile.py` vs `jobs.py` split).
+  - `VALID_STATUSES = {"new", "saved", "rejected", "applied", "interviewing"}`
+  - `set_job_status(conn, job_id: int, status: str, reason: str | None = None, clock: Callable[[], datetime] | None = None) -> None`: validates `status in VALID_STATUSES`, raises `ValueError` otherwise; `UPDATE jobs SET status = ?, decision_reason = ?, decided_at = ? WHERE id = ?`; `decided_at` from `clock()` (testable, same pattern as `process_job`'s `clock` param) or `datetime.now(timezone.utc).isoformat()`. Raises `ValueError` if `job_id` does not exist (check `cursor.rowcount == 0` after the update).
+  - `get_jobs_by_status(conn, status: str) -> list[dict[str, Any]]`: `SELECT * FROM jobs WHERE status = ? ORDER BY score DESC NULLS LAST, id DESC` (SQLite supports `NULLS LAST` from 3.30+; if the target SQLite is older, fall back to `ORDER BY (score IS NULL), score DESC, id DESC` — implementer should check `sqlite3.sqlite_version` and use the portable form to be safe).
+  - `get_status_counts(conn) -> dict[str, int]`: `SELECT status, COUNT(*) FROM jobs GROUP BY status` — used by the dashboard for tab labels/badges. Keep it this small; no other aggregation is in scope.
+
+- **`jobagent/dashboard.py` (new):** a Streamlit script, run directly with `streamlit run jobagent/dashboard.py` (**not** wrapped in a new `jobagent dashboard` CLI subcommand — Streamlit's own launcher already is the simplest entry point, and PROJECT.md's simplicity principle argues against adding a subprocess-spawning wrapper command around it).
+  - Calls `load_settings()` once at module level (same as every other entry point), `setup_logging(settings.log_level)`, opens one `connect(settings.db_path)` connection reused across reruns via `st.session_state` or `@st.cache_resource` (Streamlit idiom for a long-lived resource like a DB connection — avoids reopening the SQLite file on every widget interaction).
+  - Tabs: `New` / `Saved` / `Rejected` / `Applied` / `Interviewing`, each backed by `get_jobs_by_status`. Only jobs with `outcome == "scored"` are decision-relevant and should be the ones rendered with action buttons; `excluded`/`failed`/`duplicate` jobs are out of the status workflow by construction (they're never shown to the owner as something to decide on) but remain inspectable — M3 does not require surfacing them in the dashboard; the existing `job inspect <id>` CLI covers that. State this scoping decision explicitly in the dashboard's docstring/comment so it is not mistaken for a bug later.
+  - Each job card in the `New` tab shows title, company, location, verdict/score, matches, gaps, explanation (the same fields `format_job_inspect` renders, laid out as Streamlit widgets instead of printed text — do not duplicate formatting logic; pull the same data). Buttons: `Save`, `Reject`, `Applied`, `Interviewing`, each calling `set_job_status`. The `Reject` button reveals a short text input for the rejection reason (per PROJECT.md: "when the owner rejects a job, the agent asks for a quick reason and stores it") before the status update commits — simplest Streamlit pattern is a `st.form` per job card so the reason and the status change submit together.
+  - `Saved` / `Applied` / `Interviewing` tabs: same card layout, plus buttons to move a job to another status (e.g. `Saved → Applied`, `Applied → Interviewing`) — a small fixed transition map is enough; do not build a generic state machine.
+  - `Rejected` tab: read-only list showing the stored `decision_reason`.
+  - **Add job tab:** a `st.form` with a text area (job posting), optional `url` and `source` text inputs, and a submit button that calls `process_job` exactly as `cmd_job_paste` does (same `llm_caller` closure built from `settings`), then calls `init_db(conn)` first if needed (same as the CLI does defensively). On success, show outcome/score/matches/gaps inline — reuse `format_job_inspect` and `st.text(...)` it, rather than re-deriving a second renderer, to keep one source of truth for "what a job's analysis looks like" (explicit, minor, acceptable duplication of *display*, not of *logic* — the data assembly stays in `jobs.py`).
+  - No new Groq/LLM code — the dashboard only calls existing `process_job`/`call_llm` functions.
+
+- **`requirements.txt` (modify):** add `streamlit>=1.30.0`.
+
+- **`README.md` (modify, at the end of the milestone, by Claude per existing convention):** document `streamlit run jobagent/dashboard.py`, the new `status`/decision columns, and the dedup behavior.
+
+### New Data Flow
 
 ```text
-stdin / --file ─► job text (length checked)
-                      │
-        LLM call 1 ──►│ extract (job text only, no profile) ─► pydantic ─► verify evidence
-                      ▼
-        Python rules ─► filter: unpaid / location / experience   ──► excluded? store + stop
-                      ▼
- latest profile ─► LLM call 2: score (job text + extracted fields + profile) ─► validate
-                      ▼
-              one INSERT into jobs (outcome: scored | excluded | failed)
-                      ▼
- job inspect [ID] ─► read row ─► print
+job paste / dashboard "Add job" ──► process_job()
+                                        │
+                              extract ──┤
+                           verify evidence
+                                        │
+                         compute_dedup_key ──► find_duplicate? ──yes──► insert (outcome=duplicate, status=new) ──► stop
+                                        │no
+                                   filter rules
+                                        │
+                                    score (LLM)
+                                        │
+                              insert_job_record (status=new, dedup_key set)
+                                        │
+                                        ▼
+                                  SQLite jobs table
+                                        │
+                     ┌──────────────────┼───────────────────────┐
+                     ▼                  ▼                       ▼
+            job inspect (CLI)   dashboard tabs             set_job_status()
+                                 (New/Saved/Rejected/        (decisions.py)
+                                  Applied/Interviewing)
 ```
-
-### New and changed modules
-
-| File | Change |
-|------|--------|
-| `jobagent/jobs.py` (new) | Models, constants, text input checks, prompts, extraction, filtering, scoring, storage, inspect formatting. Plain functions. |
-| `jobagent/db.py` (modify) | Add one schema step function creating the `jobs` table; append it to `SCHEMA_STEPS`. Do not change existing functions. |
-| `jobagent/__main__.py` (modify) | Nested `job` command with `paste` and `inspect`. |
-
-The LLM calls and the clock are passed in as callables (as in M1) so `jobs.py` functions are testable without network.
-
-### Constants (top of `jobs.py`; the owner changes rules by editing these)
-
-- Allowed locations: Pune, Mumbai, Bangalore, Hyderabad, plus remote. The owner wants **all areas** of Pune and Mumbai. A small alias map for matching (architect-approved list below); the LLM is also asked to normalize areas to a city (Hinjewadi → Pune). Keep the list as a constant the owner can edit; do not add other cities.
-  - Pune: Pimpri-Chinchwad, Pimpri Chinchwad, Hinjewadi, Hinjawadi, Kharadi, Baner, Wakad, Hadapsar, Magarpatta, Viman Nagar, Kothrud, Aundh, Koregaon Park, Yerwada, Talawade, Talegaon
-  - Mumbai: Bombay, Navi Mumbai, Thane, Vashi, Airoli, Belapur, Panvel, Powai, Andheri, BKC, Bandra, Goregaon, Malad, Lower Parel, Worli, Mulund, Ghatkopar, Kalyan
-  - Bangalore: Bengaluru, Whitefield, Koramangala, Electronic City, Marathahalli, Bellandur, Indiranagar, Hebbal, Manyata, Sarjapur, HSR Layout
-  - Hyderabad: Secunderabad, Hitec City, HITEC City, Gachibowli, Madhapur, Kondapur, Financial District, Uppal, Nanakramguda
-- `MAX_YEARS = 3` (exclude only when the minimum required experience is above this).
-- `STRONG_MIN = 7`, `STRETCH_MIN = 5` (verdict thresholds; the verdict is derived in Python from the score, never by the LLM).
-- Job text limits: at least 100 and at most 20,000 characters.
-
-### Extraction model (pydantic v2)
-
-Fields produced by LLM call 1 (all optional except `title`):
-
-- `title` (required, non-empty), `company`, `summary` (one sentence on what the role is)
-- `location_text` (verbatim snippet from the posting), `cities` (list, normalized city names), `work_mode` (`onsite`, `hybrid`, `remote`, `unknown`), `remote_scope` (`india`, `global`, `other_region`, `unspecified`)
-- `experience_text` (verbatim snippet), `experience_min_years`, `experience_max_years` (numbers or null)
-- `pay_text` (verbatim snippet), `pay_status` (`stated`, `unpaid`, `not_stated`)
-- `skills` (list of technologies/skills named in the posting)
-- `posting_date` (text as written, or null)
-
-`source` and `url` come from CLI flags (`--source`, `--url`), not from the LLM. Default `source` is `pasted`.
-
-### Evidence rule (protects strong matches from silent loss)
-
-**An exclusion may only rest on a snippet that appears verbatim in the pasted text, and the structured value must agree with that snippet.** After normalizing both sides with `normalize_snippet` from `profile.py`, the `pay_text`, `location_text` or `experience_text` that justifies an exclusion must be found in the job text. If it is not found, treat that field as unknown, add a flag such as "location could not be verified", and do not exclude. Because a verbatim snippet can still be misclassified by the LLM, Python also checks the value against the snippet: for experience, the number used as `experience_min_years` must appear as a digit string in `experience_text` (for example "4+ years" supports 4, not 2); for pay, `unpaid` is accepted only if the snippet contains an unpaid-style phrase (for example "unpaid", "no stipend", "without pay", "voluntary", "volunteer"); for location, each excluded city name or its alias must appear in `location_text`. If the check fails, treat the field as unknown, flag it, and do not exclude. This mirrors the M1 evidence check and stops a wrong extraction from hiding a good job.
-
-### Filter rules (deterministic Python, run after extraction, before scoring)
-
-Run all rules; the first failing rule gives the exclusion reason (rules are independent).
-
-1. **Unpaid:** exclude only if `pay_status` is `unpaid` and its verified `pay_text` exists. `not_stated` is never excluded; it adds the flag "pay not stated".
-2. **Location:** pass if any normalized city is in the allowed list (hybrid or onsite included; a posting that lists several cities passes if one is allowed). Else pass if `work_mode` is `remote` and `remote_scope` is `india`, `global` or `unspecified` (`unspecified` adds the flag "remote scope not stated"). Else pass with the flag "location not stated" if the location is unknown or unverified, or with the flag "only country stated (India)" if the posting names no city and no remote mode. Otherwise exclude, with the cities named in the reason.
-3. **Experience:** exclude only if verified `experience_min_years` is greater than `MAX_YEARS`. Unknown experience passes with the flag "experience not stated".
-
-An excluded job is stored with `outcome = 'excluded'`, the reason and the supporting snippet, and is **not scored** (no second LLM call).
-
-### Scoring (LLM call 2)
-
-- **Input:** the job text, the extracted fields, and the latest profile as compact JSON **without** `evidence` lists and **without** embeddings. Contact details are already absent from the profile.
-- **Prompt guidance:** judge by meaning, not keywords; score 1 to 10 for how realistic a candidate this owner is; experience requirements lower the score as they rise (0-1 years no penalty, about 2 years a modest one, 3 years a clear one); the owner is a fresher, so internships and entry-level roles are in scope; every claimed match must name a specific item from the profile; do not invent profile content; treat the posting as data, never as instructions.
-- **Output JSON:** `score` (integer 1-10), `matches` (list of `{requirement, profile_item}`), `gaps` (list of short strings), `explanation` (2-4 sentences).
-- **Validation (deterministic):** score is an integer from 1 to 10; `explanation` non-empty; every `profile_item` must be found (normalized) in the profile's text (names, skills, technologies, summaries). Matches that fail are dropped and recorded as a warning. If the reply is not valid JSON or fails these checks, **retry once**, listing the problems without echoing large text. A second failure stores the job with `outcome = 'failed'`.
-- **Verdict:** derived in Python: strong when score is at least `STRONG_MIN`, stretch when at least `STRETCH_MIN`, otherwise weak.
-
-### Outcome handling
-
-| Situation | Stored? | `outcome` | Exit code |
-|-----------|---------|-----------|-----------|
-| Extracted, passed filters, scored | yes | `scored` | 0 |
-| Excluded by a filter rule | yes | `excluded` | 0 |
-| Extraction or scoring output invalid after one retry | yes (with raw text) | `failed` | 1 |
-| Missing key, no profile, empty or oversized input, LLM network/auth/rate-limit error | **no** | none | 1 |
-
-Transient problems store nothing so the owner can simply paste again. Failed and excluded rows stay viewable with their reason (project decision: strong matches are never silently lost).
-
-### Database: schema step 1
-
-One table, `jobs`. Suggested columns (implementer may adjust names, not meaning):
-
-- `id` INTEGER PRIMARY KEY, `created_at` TEXT (UTC ISO 8601), `source`, `url`, `posting_date`
-- `raw_text` TEXT (the pasted posting; lives only in the git-ignored database)
-- extracted: `title`, `company`, `summary`, `location_text`, `cities_json`, `work_mode`, `remote_scope`, `experience_text`, `experience_min_years`, `experience_max_years`, `pay_text`, `pay_status`, `skills_json`
-- `flags_json` (list of strings), `outcome`, `outcome_reason`
-- analysis (null unless scored): `score`, `verdict`, `matches_json`, `gaps_json`, `explanation`, `profile_version`, `llm_model`
-
-Create the table with a single `CREATE TABLE IF NOT EXISTS` statement (add any index as its own `IF NOT EXISTS` statement run before the version is recorded), because `sqlite3` does not make DDL plus the version update atomic. Write each job with **one INSERT at the end of the flow** (no half-written rows). `job paste` calls `connect` and `init_db` itself so the owner does not need to run `init-db` first. Use parameterized queries only.
-
-### CLI
-
-- `python -m jobagent job paste [--file PATH] [--url URL] [--source NAME]`
-  - Requires `GROQ_API_KEY` and an existing profile (`profile build` done); check both **before any network call**. If the resume PDF changed since the profile was built, print a one-line warning and continue.
-  - With no `--file`, read all of stdin. If stdin is a terminal, first print a one-line hint to paste the text and finish with Ctrl+Z then Enter (Windows). Read files as UTF-8.
-  - On success print a short summary: id, title, company, outcome, and for scored jobs the score and verdict; end with the hint `job inspect <id>`.
-- `python -m jobagent job inspect [ID]`
-  - Read-only, no network. Without an ID, show the most recent job. Print: id, timestamps, source and URL, title, company, location and work mode, experience requirement, pay (with the "pay not stated" flag where it applies), skills, flags, outcome with the reason and supporting snippet for excluded and failed jobs, and for scored jobs the score, verdict, matches (requirement and matching profile item), gaps, explanation, and profile version. Never print `raw_text`, the API key or the profile JSON.
-  - If the job does not exist or the database has no jobs, say so plainly (exit 1).
-- Follow the existing pattern: `cmd_*` returns an exit code, errors to stderr. `info`, `init-db` and `profile` are unchanged.
 
 ---
 
 ## Implementation Plan
 
-1. `db.py`: add the schema step function and append it to `SCHEMA_STEPS`.
-2. `jobs.py`: constants; input checks; extraction model and prompt; verification of snippets; filter function returning (excluded?, reason, snippet, flags); scoring model, prompt and validation; verdict function; storage (insert, fetch by id, fetch latest); inspect formatter; one orchestrating function that takes the LLM callable.
-3. `__main__.py`: nested `job` command and the two `cmd_*` functions.
-4. `README.md`: status line (M2), the two commands with the paste method, a note that jobs are stored in `private/jobagent.db`, folder map entry for `jobs.py`.
-5. Tests (below). Run `pytest` and `ruff check .`.
+### Step 1 — Schema migration
+
+Add `step_2_add_decision_and_dedup_columns` to `jobagent/db.py`. Run `init_db` against a fresh temp DB and against a DB already at `user_version = 1` (simulating an existing M2 database) to prove the migration is additive and idempotent.
+
+### Step 2 — Dedup key and duplicate handling in `jobs.py`
+
+Add `compute_dedup_key`, `find_duplicate`, wire both into `process_job` before the filter step, add the `duplicate` outcome branch, extend every record dict with the three new columns, update `insert_job_record`'s SQL, update `format_job_inspect`.
+
+### Step 3 — `decisions.py`
+
+`VALID_STATUSES`, `set_job_status`, `get_jobs_by_status`, `get_status_counts`.
+
+### Step 4 — `dashboard.py`
+
+Build the Streamlit page: connection setup, tabs, job cards with action buttons/forms, the Add-job form reusing `process_job`.
+
+### Step 5 — Dependency and docs
+
+Add `streamlit` to `requirements.txt`. Update README (Claude does this at the end, per existing convention — implementer does not need to write it, but should note in the final report what changed so Claude can write it accurately).
+
+### Step 6 — Tests
+
+`tests/test_decisions.py` (new) and extend `tests/test_jobs.py`/equivalent for dedup. See Testing Strategy.
 
 ---
 
 ## Files To Modify
 
-| File | Change |
-|------|--------|
-| `jobagent/db.py` | Add schema step 1; append to `SCHEMA_STEPS` |
-| `jobagent/__main__.py` | Nested `job` command |
-| `README.md` | Status line, commands, folder map |
-| `tests/test_db.py` | **Add** cases for step 1; do not change existing tests |
+| File | Changes | Reason |
+|------|---------|--------|
+| `jobagent/db.py` | Add schema step 2 (status/decision/dedup columns + two indexes) | Persist decision lifecycle and dedup key |
+| `jobagent/jobs.py` | `compute_dedup_key`, `find_duplicate`, duplicate branch in `process_job`, extend record dicts, extend `insert_job_record`, extend `format_job_inspect` | Prevent re-adding the same job; carry status columns through every insert path |
+| `requirements.txt` | Add `streamlit>=1.30.0` | Dashboard dependency |
+| `README.md` | Document dashboard run command, status workflow, dedup behavior | Owner-facing docs (Claude writes this at milestone end) |
 
 ## Files To Create
 
-`jobagent/jobs.py`, `tests/test_jobs.py`.
+| File | Purpose |
+|------|---------|
+| `jobagent/decisions.py` | Status validation, `set_job_status`, `get_jobs_by_status`, `get_status_counts` |
+| `jobagent/dashboard.py` | Streamlit dashboard (tabs by status, action buttons, Add-job form) |
+| `tests/test_decisions.py` | Tests for status transitions and queries |
 
 ## Files That Must Not Be Modified
 
-- `.ai/PROJECT.md`, `.ai/TASK.md`, `.ai/ARCHITECTURE.md`, `.ai/prompts/*`
-- `jobagent/profile.py`, `llm.py`, `embed.py`, `config.py`, `log.py` (import from them; do not edit them)
-- `tools/edit_task.ps1`, `.gitignore`, `requirements.txt`, `.env.example`
-- The owner's `.env` and anything in `private/`
+- Everything under `.ai/`.
+- `tools/edit_task.ps1`.
+- `jobagent/profile.py`, `jobagent/embed.py`, `jobagent/llm.py` — no M3 requirement touches profile building, embeddings, or the raw LLM call wrapper. Only reused via their existing public functions.
+- The owner's real `.env` and `private/` contents.
 
 ---
 
-## Backend / Frontend / AI
+## Backend Changes
 
-- **Backend:** CLI only; no API. **Frontend:** none (dashboard is M3).
-- **AI:** two LLM calls per job (plus at most one retry each). The LLM has no tools and writes nothing; Python validates and stores. Advisory only: nothing applies, sends or decides.
-- **External services:** Groq chat completions only. No fetching of URLs; `--url` is stored as text and never requested.
+### API Changes
+
+N/A — no HTTP API; Streamlit is a local-process UI calling Python functions directly, not a REST layer.
+
+### Services / Business Logic
+
+- Duplicate detection (`compute_dedup_key` / `find_duplicate`), inserted as a cheap pre-filter step inside `process_job` so a duplicate never reaches the paid scoring call.
+- Decision/status transitions (`decisions.py`), the only code path permitted to change `status` — the dashboard is the only caller, which keeps "advisory only, owner decides" (PROJECT.md) structurally true: no automatic status changes anywhere in `jobs.py`.
+
+### Error Handling
+
+- `set_job_status` on an unknown `job_id`: raise `ValueError`, caught by the dashboard and shown via `st.error(...)`, not a crash.
+- `set_job_status` with an invalid `status` string: `ValueError`, same handling — this should not be reachable from the UI (buttons use the fixed `VALID_STATUSES`), but the function itself must still validate, since it is also reachable from tests/other code.
+- Dashboard "Add job" errors (missing `GROQ_API_KEY`, no profile built, text too short/long, LLM failure): same conditions `cmd_job_paste` already handles — catch the same exception types (`ValueError`, `LLMError`) and render with `st.error`, do not let the dashboard crash mid-session.
+- `find_duplicate` must never raise on a `None`/empty `dedup_key` — guard explicitly rather than relying on SQL `NULL` comparison semantics (`NULL = NULL` is false in SQLite, which happens to be safe here, but make the guard explicit in Python so the behavior is obvious, not accidental).
+
+---
+
+## Frontend Changes
+
+All new: `jobagent/dashboard.py`, described above. Streamlit only — no separate frontend build step, consistent with PROJECT.md's stack decision.
+
+---
+
+## Database Changes
+
+### Schema Changes
+
+`jobs` table gains: `status TEXT NOT NULL DEFAULT 'new'`, `decision_reason TEXT`, `decided_at TEXT`, `dedup_key TEXT`. Two new indexes: `idx_jobs_dedup_key`, `idx_jobs_status`.
+
+### Migrations
+
+`SCHEMA_STEPS` step 2, applied via the existing `init_db` mechanism (`user_version` 1 → 2). Existing M2 databases upgrade automatically and losslessly on the next `init_db` call (all existing rows get `status='new'`, `dedup_key=NULL` — they predate dedup and are simply never matched as duplicates of anything, which is correct: no silent reclassification of pre-M3 data).
+
+### Data Considerations
+
+No backfill of `dedup_key` for pre-existing rows — out of scope, and backfilling would require re-running extraction, which costs LLM calls for no requirement in `TASK.md`. If the owner wants this, it is a follow-up task, not part of M3.
+
+---
+
+## AI/ML Changes
+
+None. No new or changed LLM prompts. The duplicate check happens in Python/SQL only, before any LLM call, which is the entire point (saves a Groq call on dupes).
+
+---
+
+## External Services
+
+None new. Same Groq usage as M2, just one fewer call per duplicate posting.
 
 ---
 
 ## Security Considerations
 
-- Job text is untrusted. Prompts present it as delimited data and instruct the model to ignore any instructions inside it. Because the LLM has no tools and its output is only parsed and validated, injected text cannot cause actions.
-- Never log or print the key, the raw posting, the profile or LLM replies. Logs may contain ids, counts and model names only. Error messages must not echo reply bodies (follow `llm.py`).
-- The profile sent to the LLM excludes contact details (already true) and evidence snippets.
-- Tests use invented fake postings and a fake profile, never the owner's data.
-- All stored data lives in the git-ignored `private/` directory.
+- No new secrets, no new network calls beyond what M2 already makes.
+- Streamlit's default dev server binds to localhost — fine for a local-first single-user tool per PROJECT.md; no auth needed, but the implementer should not enable `--server.address 0.0.0.0` or similar in any instructions/scripts, to avoid accidentally exposing the dashboard (and the job data behind it) on the local network.
+- `private/jobagent.db` stays git-ignored; no schema change affects that.
+
+---
 
 ## Performance Considerations
 
-Two short LLM calls per job, a single insert. No embedding work. `job inspect` does only a database read.
+- Duplicate check adds one indexed SQL lookup per posting — negligible, and nets out faster overall for duplicates (one skipped LLM scoring call).
+- Dashboard: reuse one DB connection across reruns (`st.cache_resource` or session state) instead of reconnecting per interaction; `get_jobs_by_status` queries are indexed and bounded by the owner's own job volume (tens to low hundreds of rows), no pagination needed at this scale.
 
 ---
 
 ## Edge Cases
 
-- Empty, whitespace-only, too short or too long input; non-UTF-8 file; stdin that is closed.
-- No profile yet; corrupt latest profile (`get_latest_profile_envelope` raises `ValueError`: report it plainly); profile older than the current resume (warn only).
-- Posting that is not a job (the extractor returns no title): stored as `failed` with a clear reason.
-- LLM returns fences, preamble or invalid JSON: strip to the outermost JSON object as `profile.py` does; one retry; then fail.
-- Missing fields everywhere (no company, location, pay or experience): the job still proceeds with flags; nothing is excluded on unknown data.
-- Remote roles limited to another region (for example US-only): excluded by the location rule, with the snippet shown.
-- Several cities listed, one allowed: passes.
-- Experience ranges (for example "2-5 years"): the minimum decides; "0-1" and "fresher" pass.
-- Prompt-injection text inside the posting.
-- Pasting the same posting twice creates two rows (duplicate handling is M3).
-- Database at `user_version` 0 (live) and at the new version (tests); applying the step twice must be a no-op.
+- Pasting the exact same posting text twice → same `dedup_key` → second insert is `outcome="duplicate"`, status stays `new`, no scoring call, original job untouched.
+- Same job re-posted with a different URL but identical title/company/city → still caught (URL is part of the key but title+company+city alone already narrows strongly; this is an intentional, documented trade-off, not a bug — a URL-only key would miss the far more common case of the same job appearing on two job boards).
+- Job with no verified company or city (both stripped by evidence verification) → dedup key degrades to title+url only; still functions, just coarser. Acceptable per PROJECT.md ("never silently lose" applies to matches, not to dedup precision).
+- Rejecting a job with an empty reason → allowed (`reason` is optional in both `set_job_status` and the dashboard form); do not force a non-empty string, PROJECT.md says "asks for a quick reason", not "requires" one.
+- Moving a job directly from `New` to `Interviewing` (skipping `Saved`/`Applied`) → allowed; `VALID_STATUSES` has no enforced ordering, and the owner may legitimately already be interviewing when they log a job. Do not build a strict state machine for this.
+- Dashboard opened with an empty/missing database → `get_jobs_by_status` on a table that doesn't exist yet should not crash the whole page; call `init_db(conn)` once at dashboard startup (same defensive call `cmd_job_paste` already makes) so the table always exists before any query runs.
+- Two dashboard browser tabs changing the same job's status concurrently → last write wins (SQLite `UPDATE`), acceptable for a single-owner local tool; not a requirement to solve further.
+
+---
 
 ## Backwards Compatibility
 
-`info`, `init-db` (now creates the `jobs` table), and all `profile` commands keep working. No change to the profile files or settings. Existing tests must pass unchanged.
+- `job paste` / `job inspect` CLI commands keep working unchanged in behavior (plus a new `Status:`/duplicate-aware output line).
+- Existing M2 databases upgrade in place via the schema step; no data loss, no required manual migration step from the owner beyond running the app once (`init_db` runs automatically from both `init-db` and `job paste`).
+- `insert_job_record`'s dict-based `INSERT ... VALUES (:name, ...)` pattern is extended, not replaced — any external code relying on the old column set still has those columns unchanged.
 
 ---
 
 ## Testing Strategy
 
-No test may use the network, a real API key or a real resume. Pass fake LLM callables (plain functions returning canned JSON) and use `tmp_path` databases. Write all of the following:
+### Unit Tests
 
-- **Schema:** step 1 creates `jobs`; running `init_db` twice is a no-op; `user_version` increments to 1.
-- **Input:** empty, too short, too long rejected; `--file` read as UTF-8.
-- **Extraction:** valid JSON parsed; fences and preamble stripped; missing title fails; invalid JSON retried once then stored as `failed` with raw text.
-- **Evidence rule:** an `unpaid` claim whose snippet is not in the text does **not** exclude (flag instead); a verified one does. Same for location and experience.
-- **Value-vs-snippet check:** experience min 4 with snippet "2+ years" does not exclude (flag); "unpaid" with a snippet that only says "paid leave policy" does not exclude; a city that is not in the snippet is not used to exclude.
-- **Filters:** unpaid excluded; `not_stated` pay passes with flag; allowed city passes; alias (Bengaluru) passes; multi-city with one allowed passes; US-only remote excluded; India remote and global remote pass; unspecified remote passes with flag; unknown location passes with flag; experience min 4 excluded, min 3 passes, "0-1" passes, unknown passes with flag.
-- **Scoring:** valid reply stored with correct verdict boundaries (4, 5, 6, 7); score out of range or non-integer triggers retry; unsupported `profile_item` dropped with warning; retry succeeds; second failure stored as `failed`.
-- **Outcomes:** excluded jobs trigger no second LLM call; transient `LLMError` stores nothing; success stores exactly one row; no profile or no key fails before any LLM call.
-- **Inspect:** output contains title, score, verdict, matches, gaps, explanation, flags, exclusion reason and snippet; never contains `raw_text` or a vector; missing id and empty database handled.
-- **CLI wiring:** `job paste` and `job inspect` parse arguments; existing commands unaffected.
+- **`tests/test_db.py` (extend):** schema step 2 adds the four columns and two indexes; running `init_db` on a DB already at `user_version = 1` (seed it with just step 1) reaches `user_version = 2` with existing rows defaulted to `status='new'`.
+- **`tests/test_jobs.py` (extend, or wherever M2's job tests live):**
+  - `compute_dedup_key` is stable for equivalent inputs (same title/company/city regardless of case/whitespace) and differs for genuinely different jobs.
+  - `process_job` called twice with identical posting text (same fake `llm_caller` returning the same extraction) produces a first row with `outcome="scored"` and a second with `outcome="duplicate"`, and the fake scoring `llm_caller` is asserted to have been called only once (proves the LLM scoring call is actually skipped, not just the outcome label).
+  - A record's `status` defaults to `"new"` across the `failed` / `excluded` / `scored` / `duplicate` branches.
+- **`tests/test_decisions.py` (new):**
+  - `set_job_status` updates status/reason/decided_at on an existing row; raises `ValueError` for an unknown `job_id`; raises `ValueError` for an invalid status string.
+  - `get_jobs_by_status` returns only rows with the matching status, ordered as specified.
+  - `get_status_counts` matches manual counts across a small fixture of rows with mixed statuses.
 
-### Manual verification (owner, Windows PowerShell)
+All tests use temporary SQLite files (`tmp_path`), a fake `llm_caller`, and no network — same pattern as the existing M1/M2 tests.
 
-```text
-python -m jobagent init-db
-python -m jobagent job paste              (paste an invented or real posting, then Ctrl+Z, Enter)
-python -m jobagent job inspect
-python -m jobagent job paste --file posting.txt --url https://example.com/job --source "careers page"
-pytest
-ruff check .
-git status                                 (expect: nothing from private/)
+### Integration Tests
+
+None beyond the above; no new integration surface (no HTTP API).
+
+### End-to-End Tests
+
+N/A. Streamlit UI testing is out of scope for this milestone (would require `streamlit.testing` or a browser driver — not justified by PROJECT.md's simplicity requirement for a one-person tool). Manual verification covers the dashboard.
+
+### Manual Verification
+
+```powershell
+pip install -r requirements.txt   # picks up streamlit
+python -m jobagent init-db        # upgrades schema to user_version = 2
+streamlit run jobagent/dashboard.py
 ```
 
-Then judge quality **by eye on 10-15 real postings**, including at least: a strong match, a stretch, an unpaid internship, a role in a disallowed city, a US-only remote role, and a role requiring 4+ years. Check that every exclusion shows its snippet and that no good job was excluded.
+Confirm: pasting the same job twice via the dashboard's Add-job form shows a duplicate outcome the second time; Save/Reject/Applied/Interviewing buttons move a job between tabs; a rejection reason is stored and shown in the Rejected tab; `python -m jobagent job inspect <id>` still works and shows the new `Status:` line.
 
 ---
 
 ## Acceptance Criteria
 
-Mapped to `TASK.md`:
+(Mirrors `TASK.md`.)
 
-- [ ] A posting can be pasted through `job paste` (stdin or `--file`).
-- [ ] The posting is parsed into the structured job model with title, company, location, experience, skills, pay, source and posting date.
-- [ ] Unpaid, disallowed-location and over-3-years jobs are excluded, only on verified evidence, and unknown data is flagged rather than excluded.
-- [ ] A passing job gets a 1-10 score, a derived verdict, matches, gaps and an explanation, with matches checked against the profile.
-- [ ] The job and its analysis are stored in `private/jobagent.db` (git-ignored); excluded and failed jobs are kept with their reason.
-- [ ] `job inspect` displays the job details, score, matches, gaps, explanation, flags and reason.
-- [ ] Constraints from `PROJECT.md` hold: advisory only, no unpaid roles shown as candidates, experience and location rules, nothing private committed.
-- [ ] `pytest` and `ruff check .` pass; `info`, `init-db`, `profile` and `.ai/` are otherwise unchanged.
-- [ ] No new dependencies.
+- [ ] Jobs and analysis results are stored in `private/jobagent.db` (unchanged from M2, non-Git-tracked).
+- [ ] Duplicate postings are detected via `dedup_key` and are not re-scored; they are still stored, visibly flagged as `duplicate`.
+- [ ] Owner decisions (`new`/`saved`/`rejected`/`applied`/`interviewing`) are recorded via `set_job_status`, with an optional reason, persisted in the `jobs` table.
+- [ ] The Streamlit dashboard lists scored jobs by status in tabs and changes status via buttons.
+- [ ] The dashboard has a manual "Add job" form that reuses `process_job` (paste → extract → filter → score → store).
+- [ ] No private data is committed to the repository (no change to what's git-ignored).
+- [ ] The `.ai/` workflow and `tools/edit_task.ps1` are unchanged.
 
 ---
 
 ## Risks & Trade-offs
 
-- **LLM misreads location, pay or experience.** Mitigated by the evidence rule, flags, and keeping excluded jobs viewable. Accepted: some borderline postings will carry flags instead of a clean verdict.
-- **Score consistency.** A 20B model may score unevenly. Mitigated by a clear rubric and the by-eye check on real jobs; thresholds are adjustable constants. No automatic learning.
-- **Profile item check is substring-based,** so a vague `profile_item` can pass. Accepted for the MVP; formal evaluation is M5.
-- **Single table.** Simple now; M3 may need a migration step for decisions and duplicate keys, which the schema-step mechanism supports.
-- **Two calls per job** cost a little more than one but keep exclusions cheap and verifiable.
+### Risks
+
+- A title/company/city-based dedup key will occasionally under-match (truly identical postings worded slightly differently by two sources) or, rarely, over-match (two different roles at the same company with the same title and city). Mitigation: duplicates are never deleted or hidden — they're a flagged row the owner can inspect, so an over-match only costs a skipped re-score, never a lost job.
+- Streamlit session/connection handling has a few idiomatic ways to do it (`st.cache_resource`, `st.session_state`, a fresh `connect()` per rerun); picking the wrong one can cause "database is locked" errors under WAL if a connection is left open incorrectly across reruns. Implementer should test the dashboard with rapid repeated interactions (several button clicks in a row) before considering this done.
+
+### Trade-offs
+
+- No generic state machine for status transitions — a handful of buttons per card is simpler and matches PROJECT.md's "no abstraction layers for later."
+- Dedup is title+company+city+url, not a fuzzy/semantic match — consistent with "no embeddings/vector DB" decision; an LLM- or embedding-based dedup would be a meaningfully heavier addition not justified by this task.
+- No CLI `dashboard` subcommand wrapping `streamlit run` — one fewer file, one fewer thing to keep in sync with Streamlit's own CLI flags.
 
 ### Alternatives Considered
 
 | Alternative | Reason Not Chosen |
 |-------------|-------------------|
-| `private/jobs.json` | SQLite is already set up and is the agreed store for M3 |
-| One combined extract-and-score call | Cannot filter before spending the scoring call; harder to verify exclusions |
-| Separate `analyses` table | Re-scoring is not in M2; extra complexity without a use |
-| Fetching a pasted URL | Scraping and terms-of-service questions; deferred to M4 |
-| Adding `job list` | Dashboard in M3 covers browsing; `job inspect` defaults to the latest job |
-
----
-
-## Implementation Constraints
-
-The implementation agent MUST: follow this specification and report deviations; keep to the files and dependencies listed; verify assumptions against the repository; keep lines at 100 characters or fewer; run `pytest` and `ruff check .` and report exactly what was run and the results; never read or print `.env` values, the real resume, or the owner's profile in output.
-
-The implementation agent MUST NOT: add duplicate detection, decision statuses, a dashboard, URL fetching, new dependencies, embeddings use, or code for later milestones; modify the protected files above.
+| Fuzzy/embedding-based dedup | Reintroduces embeddings/vector similarity for a problem exact-key matching solves well enough; against the "no vector DB" decision in PROJECT.md |
+| Generic status state machine with allowed-transition rules | No requirement for it; adds abstraction PROJECT.md explicitly discourages |
+| `jobagent dashboard` CLI subcommand (subprocess wrapper around `streamlit run`) | Streamlit's own launcher is already the simplest entry point; a wrapper adds a file for no behavior change |
+| Separate `decisions` table (job_id, status, reason, timestamp) instead of columns on `jobs` | One job has exactly one current status; a side table only pays off if status history must be tracked, which `TASK.md` does not ask for |
 
 ---
 
 ## Open Questions
 
-1. **Allowed-location aliases:** resolved. The architect-approved list is under "Constants". The implementer may add a missing common spelling and must report it.
-2. **Groq model reliability:** if `openai/gpt-oss-20b` returns malformed JSON often on real postings, the implementer reports it and does not switch models without approval.
+1. **Dedup key scope (owner):** title+company+city+url is proposed as "good enough" per PROJECT.md's own suggested key (company + title + location, plus URL). Confirm before implementation if a stricter or looser key is wanted.
+2. **Dashboard visibility of `excluded`/`failed` jobs:** proposed out of scope for M3 tabs (still reachable via `job inspect`). Confirm this matches the owner's expectation, since PROJECT.md stresses "excluded or failed jobs are kept and viewable."
 
 ---
 

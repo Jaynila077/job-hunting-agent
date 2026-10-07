@@ -213,13 +213,12 @@ Job sources ────────┘            │
 - Architecture simplified to the lean plan above (owner-approved).
 - M0 Setup: implemented and passed review.
 - M1 Profile Model: implemented and complete (`profile build`, `profile inspect`; versioned profile in `private/profile/`).
+- M2 Job analysis + matching MVP: implemented and complete (`job paste`, `job inspect`; filtering, scoring, matches/gaps/explanation, `jobs` table in SQLite).
 
 ### In Progress
 
-- M2 Job analysis + matching MVP: `TASK.md` written by the owner; `ARCHITECTURE.md` written; Gemini implements next.
+- M3 Save and track: `TASK.md` written by the owner; `ARCHITECTURE.md` written (decision status + dedup columns on `jobs`, `decisions.py`, Streamlit `dashboard.py`); Gemini implements next.
 
 ### Known Issues
 
 - Company watchlist needed before M4 (owner to research).
-
-

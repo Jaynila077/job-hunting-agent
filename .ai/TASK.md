@@ -11,38 +11,34 @@
 
 **Title:**
 
-M2 – Job Analysis + Matching MVP
+M3 – Save and Track
 
 **Type:**
-Implementation (job extraction, filtering, scoring, and display of matches/gaps/explanation)
+Implementation (job storage, duplicate handling, decision tracking, and Streamlit dashboard)
 
 ---
 
 ## Objective
 
-Implement the core job analysis and matching functionality: accept a pasted job posting, extract job details, filter out unsuitable jobs, score the job against the owner’s profile, and present the matches, gaps, and a concise explanation to the owner.
+Implement the job persistence layer and user decision workflow: store jobs and their analysis results, detect and prevent duplicates, record owner decisions (saved, rejected, applied, interviewing), and provide a Streamlit dashboard with a manual job addition flow.
 
 ---
 
 ## Requirements
 
-- Accept a job posting via a paste command (e.g., `job paste`).
-- Parse the job posting into a structured job model capturing title, company, location, experience requirement, skills/technologies, pay, source, and posting date.
-- Apply filtering rules to exclude jobs that do not meet basic criteria (e.g., unpaid, location not allowed, experience too high).
-- Score the remaining job against the owner’s profile, producing:
-  - A relevance score (1–10).
-  - Lists of matching background items and missing requirements.
-  - A brief explanation of why the job is relevant or not.
-- Store the job and its analysis results in a persistent, non‑Git‑tracked location (e.g., SQLite or `private/jobs.json`).
-- Provide a CLI command (e.g., `job inspect`) that displays the job details, score, matches, gaps, and explanation.
-- Ensure that the job analysis respects the constraints defined in `PROJECT.md` (e.g., no unpaid roles, experience filter, location filter).
+- Persist jobs and their analysis results in a non‑Git‑tracked location (e.g., SQLite or `private/jobs.json`).
+- Detect duplicates using a unique key (e.g., company + title + location + URL) and prevent re‑adding the same job.
+- Record owner decisions (saved, rejected, applied, interviewing) with optional rejection reasons.
+- Provide a Streamlit dashboard that lists jobs by status and allows the owner to change status via buttons.
+- Include a manual “Add job” flow in the dashboard for pasting job postings.
+- Ensure all data handling respects the constraints defined in `PROJECT.md` (e.g., no private data committed, local‑first storage).
 
 ---
 
 ## Constraints
 
-- The implementation must use the existing environment and tooling set up in M0 (Miniconda, `pyproject.toml`, logging, SQLite, etc.).
-- No business logic beyond job extraction, filtering, scoring, and inspection is required.
+- Use the existing environment and tooling set up in M0 (Miniconda, `pyproject.toml`, logging, SQLite, etc.).
+- No business logic beyond job persistence, duplicate handling, decision tracking, and dashboard UI is required.
 - The job data must be stored in a location that is not tracked by Git (e.g., `private/jobs.json` or a SQLite table).
 
 ---
@@ -50,7 +46,7 @@ Implement the core job analysis and matching functionality: accept a pasted job 
 ## Out of Scope
 
 - Full job matching or recommendation logic beyond the MVP scoring.
-- Any changes to the overall architecture beyond the job analysis component.
+- Any changes to the overall architecture beyond the job persistence and dashboard component.
 - Embedding storage beyond the job analysis itself.
 
 ---
@@ -64,14 +60,13 @@ Implement the core job analysis and matching functionality: accept a pasted job 
 
 ## Acceptance Criteria
 
-> The job analysis and matching MVP implementation is complete only when all applicable criteria are satisfied.
+> The job persistence and dashboard implementation is complete only when all applicable criteria are satisfied.
 
-- [ ] A job posting can be pasted via the CLI command.
-- [ ] The job is parsed into a structured model with all required fields.
-- [ ] Filtering rules are applied and unsuitable jobs are excluded.
-- [ ] The job is scored against the owner’s profile, producing a relevance score, matches, gaps, and explanation.
-- [ ] The job and its analysis results are stored in a non‑Git‑tracked location.
-- [ ] The CLI command `job inspect` displays the job details, score, matches, gaps, and explanation.
+- [ ] Jobs and their analysis results are stored in a non‑Git‑tracked location.
+- [ ] Duplicate jobs are detected and prevented from being added again.
+- [ ] Owner decisions (saved, rejected, applied, interviewing) are recorded with optional rejection reasons.
+- [ ] The Streamlit dashboard lists jobs by status and allows status changes via buttons.
+- [ ] The dashboard includes a manual “Add job” flow for pasting job postings.
 - [ ] The implementation respects all constraints from `PROJECT.md`.
 - [ ] No private data is committed to the repository.
 - [ ] The `.ai/` workflow remains unchanged.
@@ -103,8 +98,8 @@ Implement the core job analysis and matching functionality: accept a pasted job 
 
 ## Implementation Notes
 
-- This task builds on the profile model created in M1.
-- No other agent will define the job analysis; this task is handled by the current implementation agent.
+- This task builds on the profile model created in M1 and the job analysis component completed in M2.
+- No other agent will define the job persistence; this task is handled by the current implementation agent.
 
 ---
 
@@ -114,7 +109,7 @@ Implement the core job analysis and matching functionality: accept a pasted job 
 
 - None at this stage.
 
-**Resolved:** All product decisions and constraints that affect the job analysis component have been preserved.
+**Resolved:** All product decisions and constraints that affect the job persistence component have been preserved.
 
 ---
 
@@ -127,4 +122,3 @@ Implement the core job analysis and matching functionality: accept a pasted job 
 **Summary:**
 
 <!-- Brief description of what was ultimately implemented. -->
-

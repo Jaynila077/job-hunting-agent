@@ -7,6 +7,7 @@ from jobagent.db import init_db
 from jobagent.jobs import (
     JobExtraction,
     check_job_text_length,
+    compute_dedup_key,
     derive_verdict,
     evaluate_filter_rules,
     format_job_inspect,
@@ -502,3 +503,79 @@ def test_get_latest_job(memory_db: sqlite3.Connection):
     latest = get_latest_job(memory_db)
     assert latest is not None
     assert latest["id"] == 1
+
+
+def test_compute_dedup_key():
+    k1 = compute_dedup_key("Python Engineer", "Kasnet", ["Pune"], "https://kasnet.com/jobs/1")
+    k2 = compute_dedup_key("python engineer  ", " Kasnet ", ["pune"], "https://kasnet.com/jobs/1/")
+    assert k1 == k2
+
+    k3 = compute_dedup_key("Java Engineer", "Kasnet", ["Pune"], None)
+    assert k1 != k3
+
+
+def test_process_job_duplicate_skips_scoring_llm(
+    memory_db: sqlite3.Connection, sample_profile_envelope
+):
+    raw_text = (
+        "Role: AI Engineer at Kasnet. Location: Pune, India. Looking for a candidate skilled in "
+        "Python and FastAPI. 0-1 years of experience. Competitive salary."
+    )
+
+    score_calls = 0
+
+    def fake_llm(sys_p: str, _usr_p: str) -> str:
+        nonlocal score_calls
+        if "Extract structured details" in sys_p:
+            return json.dumps(
+                {
+                    "title": "AI Engineer",
+                    "company": "Kasnet",
+                    "summary": "AI role",
+                    "location_text": "Pune, India",
+                    "cities": ["Pune"],
+                    "work_mode": "onsite",
+                    "remote_scope": "unspecified",
+                    "experience_text": "0-1 years",
+                    "experience_min_years": 0.0,
+                    "pay_text": "Competitive salary",
+                    "pay_status": "stated",
+                    "skills": ["Python", "FastAPI"],
+                }
+            )
+        score_calls += 1
+        return json.dumps(
+            {
+                "score": 8,
+                "matches": [{"requirement": "Python", "profile_item": "Python"}],
+                "gaps": [],
+                "explanation": "Great fit.",
+            }
+        )
+
+    # First run: scored
+    j1, r1 = process_job(
+        raw_text=raw_text,
+        conn=memory_db,
+        profile_envelope=sample_profile_envelope,
+        llm_caller=fake_llm,
+        llm_model="test-model",
+    )
+    assert j1 == 1
+    assert r1["outcome"] == "scored"
+    assert r1["status"] == "new"
+    assert score_calls == 1
+
+    # Second run: duplicate detected, score LLM NOT called!
+    j2, r2 = process_job(
+        raw_text=raw_text,
+        conn=memory_db,
+        profile_envelope=sample_profile_envelope,
+        llm_caller=fake_llm,
+        llm_model="test-model",
+    )
+    assert j2 == 2
+    assert r2["outcome"] == "duplicate"
+    assert r2["outcome_reason"] == "Duplicate of job 1"
+    assert r2["status"] == "new"
+    assert score_calls == 1  # Still 1!

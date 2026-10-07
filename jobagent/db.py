@@ -46,9 +46,24 @@ def step_1_create_jobs_table(conn: sqlite3.Connection) -> None:
     )
 
 
-# Schema migration steps. Step 1 adds the jobs table.
+def step_2_add_decision_and_dedup_columns(conn: sqlite3.Connection) -> None:
+    """Schema step 2: adds status, decision tracking, and dedup key columns with indexes."""
+    conn.execute("ALTER TABLE jobs ADD COLUMN status TEXT NOT NULL DEFAULT 'new';")
+    conn.execute("ALTER TABLE jobs ADD COLUMN decision_reason TEXT;")
+    conn.execute("ALTER TABLE jobs ADD COLUMN decided_at TEXT;")
+    conn.execute("ALTER TABLE jobs ADD COLUMN dedup_key TEXT;")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs (dedup_key);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);"
+    )
+
+
+# Schema migration steps. Step 1 adds the jobs table. Step 2 adds decision and dedup fields.
 SCHEMA_STEPS: list[Callable[[sqlite3.Connection], None]] = [
     step_1_create_jobs_table,
+    step_2_add_decision_and_dedup_columns,
 ]
 
 
