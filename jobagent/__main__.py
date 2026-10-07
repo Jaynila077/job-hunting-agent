@@ -6,10 +6,17 @@ from pathlib import Path
 from jobagent.config import load_settings
 from jobagent.db import connect, init_db
 from jobagent.embed import embed_texts
+from jobagent.jobs import (
+    format_job_inspect,
+    get_job_by_id,
+    get_latest_job,
+    process_job,
+)
 from jobagent.llm import LLMError, call_llm
 from jobagent.log import setup_logging
 from jobagent.profile import (
     build_profile,
+    compute_sha256,
     format_profile_inspect,
     get_latest_profile_envelope,
 )
@@ -159,6 +166,133 @@ def cmd_profile_inspect(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_job_paste(args: argparse.Namespace) -> int:
+    try:
+        settings = load_settings()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    setup_logging(settings.log_level)
+
+    if not settings.groq_api_key:
+        print("Error: GROQ_API_KEY is not configured.", file=sys.stderr)
+        return 1
+
+    try:
+        profile_envelope = get_latest_profile_envelope(settings.profile_dir)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if profile_envelope is None:
+        print("Error: No profile found. Run 'profile build' first.", file=sys.stderr)
+        return 1
+
+    if settings.resume_path.is_file():
+        current_sha = compute_sha256(settings.resume_path)
+        if current_sha != profile_envelope.resume_sha256:
+            print(
+                "Warning: Resume PDF has changed since profile was built.",
+                file=sys.stderr,
+            )
+
+    # Read input text
+    if args.file:
+        file_path = Path(args.file)
+        if not file_path.is_file():
+            print(f"Error: File not found: {file_path}", file=sys.stderr)
+            return 1
+        try:
+            raw_text = file_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            print(f"Error reading file: {exc}", file=sys.stderr)
+            return 1
+    else:
+        if sys.stdin.isatty():
+            print("Paste job posting text below. Press Ctrl+Z and Enter to submit:")
+        raw_text = sys.stdin.read()
+
+    try:
+        conn = connect(settings.db_path)
+        init_db(conn)
+
+        def llm_caller(sys_p: str, usr_p: str) -> str:
+            return call_llm(
+                system_prompt=sys_p,
+                user_prompt=usr_p,
+                api_key=settings.groq_api_key or "",
+                model=settings.llm_model,
+            )
+
+        job_id, record = process_job(
+            raw_text=raw_text,
+            conn=conn,
+            profile_envelope=profile_envelope,
+            llm_caller=llm_caller,
+            llm_model=settings.llm_model,
+            source=args.source or "pasted",
+            url=args.url,
+        )
+        conn.close()
+
+        print("-" * 60)
+        title = record.get("title") or "N/A"
+        company = record.get("company") or "N/A"
+        outcome = str(record.get("outcome")).upper()
+        print(f"Job ID:   {job_id}")
+        print(f"Title:    {title} @ {company}")
+        print(f"Outcome:  {outcome}")
+
+        if record.get("outcome") == "scored":
+            print(f"Score:    {record.get('score')}/10 ({str(record.get('verdict')).upper()})")
+        elif record.get("outcome") == "excluded":
+            print(f"Reason:   {record.get('outcome_reason')}")
+        elif record.get("outcome") == "failed":
+            print(f"Reason:   {record.get('outcome_reason')}")
+
+        print(f"\nInspect full analysis: python -m jobagent job inspect {job_id}")
+        return 0 if record.get("outcome") != "failed" else 1
+
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except LLMError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_job_inspect(args: argparse.Namespace) -> int:
+    try:
+        settings = load_settings()
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    conn = connect(settings.db_path)
+    init_db(conn)
+
+    if args.id is not None:
+        job = get_job_by_id(conn, args.id)
+        if job is None:
+            print(f"Error: Job ID {args.id} not found.", file=sys.stderr)
+            conn.close()
+            return 1
+    else:
+        job = get_latest_job(conn)
+        if job is None:
+            print("Error: No jobs found in database.", file=sys.stderr)
+            conn.close()
+            return 1
+
+    conn.close()
+    print(format_job_inspect(job))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="jobagent",
@@ -169,17 +303,37 @@ def main() -> None:
     subparsers.add_parser("info", help="Display environment and path configuration")
     subparsers.add_parser("init-db", help="Initialize SQLite database and run pending schema steps")
 
+    # Profile commands
     profile_parser = subparsers.add_parser("profile", help="Manage resume profile model")
     profile_subs = profile_parser.add_subparsers(dest="subcommand")
 
     build_parser = profile_subs.add_parser(
-        "build", help="Extract and build profile from resume PDF")
+        "build", help="Extract and build profile from resume PDF"
+    )
     build_parser.add_argument(
         "--force",
         action="store_true",
         help="Force rebuild even if resume is unchanged",
     )
     profile_subs.add_parser("inspect", help="Display current structured profile")
+
+    # Job commands
+    job_parser = subparsers.add_parser("job", help="Manage job analysis and matching")
+    job_subs = job_parser.add_subparsers(dest="subcommand")
+
+    paste_parser = job_subs.add_parser("paste", help="Paste and analyze a job posting")
+    paste_parser.add_argument("--file", help="Path to text file containing job posting")
+    paste_parser.add_argument("--url", help="Job posting URL")
+    paste_parser.add_argument("--source", default="pasted", help="Source identifier")
+
+    inspect_job_parser = job_subs.add_parser("inspect", help="Inspect a stored job analysis")
+    inspect_job_parser.add_argument(
+        "id",
+        type=int,
+        nargs="?",
+        default=None,
+        help="Job ID to inspect (defaults to latest job)",
+    )
 
     args = parser.parse_args()
 
@@ -194,6 +348,14 @@ def main() -> None:
             sys.exit(cmd_profile_inspect(args))
         else:
             profile_parser.print_help()
+            sys.exit(1)
+    elif args.command == "job":
+        if args.subcommand == "paste":
+            sys.exit(cmd_job_paste(args))
+        elif args.subcommand == "inspect":
+            sys.exit(cmd_job_inspect(args))
+        else:
+            job_parser.print_help()
             sys.exit(1)
     else:
         parser.print_help()

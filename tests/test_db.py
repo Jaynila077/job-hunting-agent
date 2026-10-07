@@ -58,20 +58,36 @@ def test_init_db_applies_steps_idempotently(tmp_path: Path):
     test_steps = [step1, step2]
 
     try:
-        # First execution applies both steps
         version = init_db(conn, steps=test_steps)
         assert version == 2
         assert get_user_version(conn) == 2
         assert step1_called == 1
         assert step2_called == 1
 
-        # Verify table and column exist
         conn.execute("INSERT INTO test_table (name) VALUES ('test');")
 
-        # Second execution does not re-apply steps
         version_second = init_db(conn, steps=test_steps)
         assert version_second == 2
         assert step1_called == 1
         assert step2_called == 1
+    finally:
+        conn.close()
+
+
+def test_schema_step_1_creates_jobs_table(tmp_path: Path):
+    db_path = tmp_path / "test_live_schema.db"
+    conn = connect(db_path)
+    try:
+        version = init_db(conn)
+        assert version == 1
+        assert get_user_version(conn) == 1
+
+        # Verify table existence and column columns
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs';")
+        assert cursor.fetchone() is not None
+
+        # Check idempotency
+        version_again = init_db(conn)
+        assert version_again == 1
     finally:
         conn.close()
