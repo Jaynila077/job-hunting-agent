@@ -124,13 +124,19 @@ Job sources ────────┘            │
 - **Store:** SQLite holds jobs, scores and the owner's decisions; a simple key (company + title + location, plus URL) prevents showing the same job twice.
 - **Dashboard:** Streamlit page with Save / Reject (+ reason) / Applied / Interviewing buttons.
 
-### Build plan (5 small milestones)
+### Build plan (6 small milestones)
 
-- **M0 Setup:** environment, `.gitignore`, `.env`, config, SQLite helper, README, a few tests.
-- **M1 Profile model:** PDF resume in `private/` becomes a structured, versioned profile with evidence and embeddings (`profile build`, `profile inspect`). Scoring one job follows. The core value.
-- **M2 Save and track:** store jobs and decisions; Streamlit dashboard.
-- **M3 Auto-fetch + daily run:** career-page feeds, Windows Task Scheduler, digest.
-- **M4 Polish:** stretch-job rules, reject reasons, cleanup.
+- **M0 Setup:** environment, `.gitignore`, `.env`, config, SQLite helper, README, and a few tests.
+
+- **M1 Profile model:** PDF resume in `private/` becomes a structured, versioned profile with evidence and embeddings (`profile build`, `profile inspect`). The agent's understanding of the user is established.
+
+- **M2 Job analysis + matching MVP:** analyze a manually provided job, extract its requirements, apply basic rule-based filters, and score it against the profile with matches, gaps, and a relevance explanation. The first working end-to-end version.
+
+- **M3 Save and track:** store jobs and matching results, handle duplicates, track decisions (saved, rejected, applied, interviewing), and add the Streamlit dashboard with a manual "Add job" flow.
+
+- **M4 Auto-fetch + daily run:** career-page feeds, company watchlist, remote/aggregator feed, `run-daily`, Windows Task Scheduler, deduplication, and daily job discovery.
+
+- **M5 Digest + polish:** strong/stretch job selection, "nothing today" state, updated-job flag, reject reasons, saved-job checks, matching evaluation, unsupported-claim checks, and final cleanup/hardening.
 
 ---
 
@@ -206,14 +212,14 @@ Job sources ────────┘            │
 - Product concept, goals and user experience defined.
 - Architecture simplified to the lean plan above (owner-approved).
 - M0 Setup: implemented and passed review.
+- M1 Profile Model: implemented and complete (`profile build`, `profile inspect`; versioned profile in `private/profile/`).
 
 ### In Progress
 
-- M1 Profile Model: `ARCHITECTURE.md` written; Gemini implements next.
+- M2 Job analysis + matching MVP: `TASK.md` written by the owner; `ARCHITECTURE.md` written; Gemini implements next.
 
 ### Known Issues
 
-- `TASK.md` (M1) still says embeddings use "the same LLM provider" and lists target roles/locations as profile fields; `ARCHITECTURE.md` overrides both.
-- Company watchlist needed before M3 (owner to research).
+- Company watchlist needed before M4 (owner to research).
 
 
